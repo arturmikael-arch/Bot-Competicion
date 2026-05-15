@@ -506,6 +506,15 @@ if (interaction.commandName === "finalize") {
 });
 
 // =====================
+
 register();
 client.login(process.env.TOKEN);
-console.log(process.env.TOKEN);
+
+// Add this part below ↓
+const express = require('express');
+const server = express();
+
+server.get('/', (req, res) => res.send('Bot is running!'));
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`🌐 Web server running on port ${PORT}`));
