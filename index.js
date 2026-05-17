@@ -250,9 +250,28 @@ async function register() {
 }
 
 // =====================
-// READY (FIX WARNING)
+// MOVE TEAMS TO VOICE CHANNELS (FIXED - ADDED MISSING FUNCTION)
 // =====================
-client.once("clientReady", () => {
+async function moveTeams(guild, redTeam, blueTeam) {
+  for (const id of redTeam) {
+    const member = await guild.members.fetch(id).catch(() => null);
+    if (member?.voice?.channel) {
+      await member.voice.setChannel(RED_VC_ID);
+    }
+  }
+
+  for (const id of blueTeam) {
+    const member = await guild.members.fetch(id).catch(() => null);
+    if (member?.voice?.channel) {
+      await member.voice.setChannel(BLUE_VC_ID);
+    }
+  }
+}
+
+// =====================
+// READY (FIXED - CHANGED "clientReady" TO "ready")
+// =====================
+client.once("ready", () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
 });
 
@@ -618,11 +637,13 @@ return interaction.reply("⚽ Match started successfully");
 }
 
   // =====================
-  // STATS
+  // STATS (FIXED - ADDED CONDITIONAL CHECK)
   // =====================
-  return interaction.reply(
-  `Skill: ${playerData[member.id].skill}\nPosition: ${playerData[member.id].position}`
-);
+  if (interaction.commandName === "stats") {
+    return interaction.reply(
+      `Skill: ${playerData[member.id].skill}\nPosition: ${playerData[member.id].position}`
+    );
+  }
 
 });
 
