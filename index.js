@@ -347,13 +347,14 @@ client.on('interactionCreate', async interaction => {
   }
 
 // =====================
-// AUTOBALANCE (NEW)
+// AUTOBALANCE (FIXED - PROPER VALIDATION)
 // =====================
 if (interaction.commandName === "autobalance") {
 
   const players = getAllVoicePlayers(guild);
   
-  if (draftMode || captains.red !== null || captains.blue !== null) {
+  // Check if captains were manually selected (using /captains command)
+  if (draftMode && captains.red !== null && captains.blue !== null) {
     return interaction.reply({
       content: "❌ Captains already selected. Auto balance only works in free queue.",
       flags: 64
@@ -792,6 +793,7 @@ return interaction.reply("⚽ Match started successfully");
   captains = { red: null, blue: null };
   queue = [];
   matchStarted = false;
+  draftMode = false;
 
   return interaction.reply({
     embeds: [embed]
