@@ -4,7 +4,8 @@ const {
   REST,
   Routes,
   SlashCommandBuilder,
-  EmbedBuilder
+  EmbedBuilder,
+  ChannelType
 } = require('discord.js');
 
 require('dotenv').config();
@@ -27,6 +28,7 @@ const PLAYER_ROLES = ["FC26 Player", "Member"];
 
 const RED_VC_ID = "1504096957407170611";
 const BLUE_VC_ID = "1504097182620581958";
+const MAIN_VC_ID = "1504095834365206551"; // Main channel to gather all players after competition ends
 
 // =====================
 // DATA
@@ -58,6 +60,7 @@ let competitionMessage = null;
 let competitionScores = { red: 0, blue: 0 };
 let matchHistory = [];
 let matchCount = 0;
+let pickedPlayers = new Set(); // Track all picked players during competition
 
 // =====================
 // ROLE CHECK
@@ -144,6 +147,27 @@ function buildCompetitionEmbed() {
 }
 
 // =====================
+// MOVE ALL PLAYERS TO MAIN CHANNEL
+// =====================
+async function moveAllPlayersToMain(guild) {
+  try {
+    const mainChannel = await guild.channels.fetch(MAIN_VC_ID).catch(() => null);
+    if (!mainChannel) return;
+
+    const allPlayers = [...draftTeams.red, ...draftTeams.blue];
+
+    for (const id of allPlayers) {
+      const member = await guild.members.fetch(id).catch(() => null);
+      if (member?.voice?.channel) {
+        await member.voice.setChannel(MAIN_VC_ID).catch(() => null);
+      }
+    }
+  } catch (error) {
+    console.error("Error moving players to main channel:", error);
+  }
+}
+
+// =====================
 // LIVE EMBED UPDATE
 // =====================
 async function updateCompetitionEmbed() {
@@ -188,7 +212,7 @@ async function updateCompetitionEmbed() {
 }
 
 // =====================
-// COMMANDS (FIXED ALL VALIDATION ERRORS)
+// COMMANDS
 // =====================
 const commands = [
 
@@ -515,6 +539,7 @@ if (interaction.commandName === "join") {
   competitionScores = { red: 0, blue: 0 };
   matchHistory = [];
   matchCount = 0;
+  pickedPlayers = new Set();
 
   const embed = new EmbedBuilder()
     .setTitle("🏆 COMPETITION STARTED")
@@ -557,11 +582,21 @@ if (interaction.commandName === "join") {
   }
 
   // =====================
-  // PICK (REMOVES PLAYER FROM EMBED LIVE)
+  // PICK (REMOVES PLAYER FROM EMBED LIVE - FIXED TO PREVENT DUPLICATE PICKS)
   // =====================
   if (interaction.commandName === "pick") {
 
     const player = interaction.options.getUser("player").id;
+
+    // =====================
+    // CHECK IF PLAYER ALREADY PICKED IN THIS COMPETITION
+    // =====================
+    if (pickedPlayers.has(player)) {
+      return interaction.reply({
+        content: `❌ <@${player}> has already been picked in this competition!`,
+        flags: 64
+      });
+    }
 
     if (!queue.includes(player)) {
       return interaction.reply("Not in queue");
@@ -573,6 +608,7 @@ if (interaction.commandName === "join") {
 
     draftTeams[currentTurn].push(player);
     queue = queue.filter(p => p !== player);
+    pickedPlayers.add(player); // Add to picked set
 
     currentTurn = currentTurn === "red" ? "blue" : "red";
 
@@ -739,7 +775,7 @@ return interaction.reply("⚽ Match started successfully");
 }
 
   // =====================
-  // FINISH COMPETITION (NEW COMMAND)
+  // FINISH COMPETITION (NEW COMMAND - UPDATED TO MOVE PLAYERS)
   // =====================
   if (interaction.commandName === "finishcompetition") {
 
@@ -784,6 +820,9 @@ return interaction.reply("⚽ Match started successfully");
 
   await competitionMessage.edit({ embeds: [embed] });
 
+  // Move all players to main channel
+  await moveAllPlayersToMain(guild);
+
   // Reset competition
   competitionActive = false;
   competitionScores = { red: 0, blue: 0 };
@@ -794,6 +833,7 @@ return interaction.reply("⚽ Match started successfully");
   queue = [];
   matchStarted = false;
   draftMode = false;
+  pickedPlayers = new Set();
 
   return interaction.reply({
     embeds: [embed]
