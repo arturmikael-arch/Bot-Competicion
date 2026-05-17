@@ -292,6 +292,13 @@ client.on('interactionCreate', async interaction => {
 if (interaction.commandName === "autobalance") {
 
   const players = getAllVoicePlayers(guild);
+  
+  if (draftMode || captains.red !== null || captains.blue !== null) {
+    return interaction.reply({
+      content: "❌ Captains already selected. Auto balance only works in free queue.",
+      flags: 64
+    });
+  }
 
   if (players.length < 2) {
     return interaction.reply({
@@ -561,14 +568,19 @@ if (interaction.commandName === "startmatch") {
     });
   }
 
-  matchStarted = true;
-
   lastMatch = {
-    red: [...draftTeams.red],
-    blue: [...draftTeams.blue]
-  };
+  red: [...draftTeams.red],
+  blue: [...draftTeams.blue]
+};
 
-  return interaction.reply("⚽ Match started successfully");
+matchStarted = true;
+
+await moveTeams(guild, draftTeams.red, draftTeams.blue);
+
+draftMode = false;
+
+return interaction.reply("⚽ Match started successfully");
+
 }
 
   // =====================
@@ -592,17 +604,25 @@ if (interaction.commandName === "startmatch") {
   // REMATCH
   // =====================
   if (interaction.commandName === "rematch") {
-    queue = [...lastMatch.red, ...lastMatch.blue];
-    return interaction.reply("Rematch ready");
+
+  if (!lastMatch) {
+    return interaction.reply({
+      content: "❌ No previous match found",
+      flags: 64
+    });
   }
+
+  queue = [...lastMatch.red, ...lastMatch.blue];
+
+  return interaction.reply("🔁 Rematch ready");
+}
 
   // =====================
   // STATS
   // =====================
-  if (interaction.commandName === "stats") {
-    ensurePlayer(member.id);
-    return interaction.reply(`Skill: ${playerData[member.id].skill}`);
-  }
+  return interaction.reply(
+  `Skill: ${playerData[member.id].skill}\nPosition: ${playerData[member.id].position}`
+);
 
 });
 
