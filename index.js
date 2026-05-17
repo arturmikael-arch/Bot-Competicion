@@ -269,9 +269,9 @@ async function moveTeams(guild, redTeam, blueTeam) {
 }
 
 // =====================
-// READY (FIXED - CHANGED "clientReady" TO "ready")
+// READY (FIXED - USING clientReady FOR discord.js v14)
 // =====================
-client.once("ready", () => {
+client.once("clientReady", () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
 });
 
