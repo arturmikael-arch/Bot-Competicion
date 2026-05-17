@@ -28,7 +28,7 @@ const PLAYER_ROLES = ["FC26 Player", "Member"];
 
 const RED_VC_ID = "1504096957407170611";
 const BLUE_VC_ID = "1504097182620581958";
-const MAIN_VC_ID = "1504095834365206551"; // Main channel to gather all players after competition ends
+const MAIN_VC_ID = "1499698725893705872"; // Main channel to gather all players after competition ends
 
 // =====================
 // DATA
@@ -150,20 +150,69 @@ function buildCompetitionEmbed() {
 // MOVE ALL PLAYERS TO MAIN CHANNEL
 // =====================
 async function moveAllPlayersToMain(guild) {
+
   try {
-    const mainChannel = await guild.channels.fetch(MAIN_VC_ID).catch(() => null);
+
+    const mainChannel =
+      await guild.channels
+        .fetch(MAIN_VC_ID)
+        .catch(() => null);
+
     if (!mainChannel) return;
 
-    const allPlayers = [...draftTeams.red, ...draftTeams.blue];
+    // get voice channels
+    const redChannel =
+      await guild.channels
+        .fetch(RED_VC_ID)
+        .catch(() => null);
 
+    const blueChannel =
+      await guild.channels
+        .fetch(BLUE_VC_ID)
+        .catch(() => null);
+
+    // unique player ids
+    const allPlayers = new Set([
+      ...draftTeams.red,
+      ...draftTeams.blue
+    ]);
+
+    // include anyone still inside vc
+    if (redChannel?.members) {
+      redChannel.members.forEach(m =>
+        allPlayers.add(m.id)
+      );
+    }
+
+    if (blueChannel?.members) {
+      blueChannel.members.forEach(m =>
+        allPlayers.add(m.id)
+      );
+    }
+
+    // move everybody
     for (const id of allPlayers) {
-      const member = await guild.members.fetch(id).catch(() => null);
+
+      const member =
+        await guild.members
+          .fetch(id)
+          .catch(() => null);
+
       if (member?.voice?.channel) {
-        await member.voice.setChannel(MAIN_VC_ID).catch(() => null);
+
+        await member.voice
+          .setChannel(MAIN_VC_ID)
+          .catch(() => null);
       }
     }
-  } catch (error) {
-    console.error("Error moving players to main channel:", error);
+
+  }
+  catch (err) {
+
+    console.error(
+      "Error moving players:",
+      err
+    );
   }
 }
 
@@ -422,19 +471,37 @@ if (interaction.commandName === "autobalance") {
   const teamBlue = [];
 
   // =====================
-  // 1 GK PER TEAM (IMPORTANT)
-  // =====================
-  if (gks.length > 0) teamRed.push(gks[0]);
-  if (gks.length > 1) teamBlue.push(gks[1]);
+// 1 GK PER TEAM (FIXED)
+// =====================
 
-  // if only 1 GK → random assign
-  if (gks.length === 1) {
-    (Math.random() > 0.5 ? teamRed : teamBlue).push(gks[0]);
+// 2 or more GKs
+if (gks.length >= 2) {
+
+  teamRed.push(gks[0]);
+  teamBlue.push(gks[1]);
+
+}
+
+// ONLY 1 GK
+else if (gks.length === 1) {
+
+  if (Math.random() > 0.5) {
+    teamRed.push(gks[0]);
+  } else {
+    teamBlue.push(gks[0]);
   }
 
-  // remove assigned gks from pool
-  const used = new Set(teamRed.concat(teamBlue));
-  const fieldPlayers = players.filter(p => !used.has(p));
+}
+
+  // remove assigned players from pool
+const used = new Set([
+  ...teamRed,
+  ...teamBlue
+]);
+
+const fieldPlayers = players.filter(
+  p => !used.has(p)
+);
 
   // =====================
   // BALANCE FIELD PLAYERS
