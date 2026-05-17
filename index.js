@@ -53,6 +53,13 @@ let competitionActive = false;
 let competitionMessage = null;
 
 // =====================
+// COMPETITION TRACKING (NEW)
+// =====================
+let competitionScores = { red: 0, blue: 0 };
+let matchHistory = [];
+let matchCount = 0;
+
+// =====================
 // ROLE CHECK
 // =====================
 function hasRole(member, roles) {
@@ -68,7 +75,8 @@ function canUse(member, cmd) {
     "startmatch",
     "finalize",
     "rematch",
-    "startcompetition"
+    "startcompetition",
+    "finishcompetition"
   ];
 
   const player = [
@@ -114,6 +122,28 @@ function getVoicePlayers(guild) {
 }
 
 // =====================
+// BUILD COMPETITION EMBED (NEW)
+// =====================
+function buildCompetitionEmbed() {
+  const matchHistoryText = matchHistory.length > 0
+    ? matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | Winner: ${m.winner}`).join("\n")
+    : "No matches yet";
+
+  const embed = new EmbedBuilder()
+    .setTitle("🏆 LIVE COMPETITION")
+    .addFields(
+      { name: "🔴 Red Team Score", value: `**${competitionScores.red}** wins`, inline: true },
+      { name: "🔵 Blue Team Score", value: `**${competitionScores.blue}** wins`, inline: true },
+      { name: "📊 Match History", value: matchHistoryText, inline: false },
+      { name: "📋 Current Match", value: matchStarted ? "Match in progress" : "Waiting to start", inline: false }
+    )
+    .setColor(0x00AEFF)
+    .setTimestamp();
+
+  return embed;
+}
+
+// =====================
 // LIVE EMBED UPDATE
 // =====================
 async function updateCompetitionEmbed() {
@@ -137,9 +167,16 @@ async function updateCompetitionEmbed() {
       ).join("\n")
     : "Empty";
 
+  const matchHistoryText = matchHistory.length > 0
+    ? matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | Winner: ${m.winner}`).join("\n")
+    : "No matches yet";
+
   const embed = new EmbedBuilder()
     .setTitle("🏆 LIVE COMPETITION")
     .addFields(
+      { name: "🔴 Red Wins", value: `**${competitionScores.red}**`, inline: true },
+      { name: "🔵 Blue Wins", value: `**${competitionScores.blue}**`, inline: true },
+      { name: "📊 Match History", value: matchHistoryText, inline: false },
       { name: "📋 Available Players", value: available },
       { name: "🔴 Red Team", value: red, inline: true },
       { name: "🔵 Blue Team", value: blue, inline: true }
@@ -225,6 +262,10 @@ const commands = [
   new SlashCommandBuilder()
     .setName('rematch')
     .setDescription('Rematch'),
+
+  new SlashCommandBuilder()
+    .setName('finishcompetition')
+    .setDescription('Finish competition and declare winner'),
 
   new SlashCommandBuilder()
     .setName('stats')
@@ -410,6 +451,9 @@ if (interaction.commandName === "autobalance") {
     }
   }
 
+  // Update competition embed with new teams
+  await updateCompetitionEmbed();
+
   return interaction.reply({
     embeds: [
       new EmbedBuilder()
@@ -466,12 +510,21 @@ if (interaction.commandName === "join") {
   captains = { red: null, blue: null };
   draftMode = true;
 
+  // Reset competition data
+  competitionScores = { red: 0, blue: 0 };
+  matchHistory = [];
+  matchCount = 0;
+
   const embed = new EmbedBuilder()
     .setTitle("🏆 COMPETITION STARTED")
     .setDescription(
       queue.map(id =>
         `• <@${id}> — **${playerData[id]?.position || "MID"}**`
       ).join("\n") || "No players"
+    )
+    .addFields(
+      { name: "🔴 Red Wins", value: "**0**", inline: true },
+      { name: "🔵 Blue Wins", value: "**0**", inline: true }
     )
     .setColor(0x00AEFF);
 
@@ -603,24 +656,66 @@ return interaction.reply("⚽ Match started successfully");
 }
 
   // =====================
-  // FINALIZE
+  // FINALIZE (UPDATED - ADD TO MATCH HISTORY)
   // =====================
   if (interaction.commandName === "finalize") {
+
+    if (!matchStarted) {
+      return interaction.reply({
+        content: "❌ No match in progress",
+        flags: 64
+      });
+    }
 
     const red = interaction.options.getInteger("red");
     const blue = interaction.options.getInteger("blue");
 
     let winner = "DRAW";
-    if (red > blue) winner = "RED";
-    if (blue > red) winner = "BLUE";
+    if (red > blue) {
+      winner = "RED";
+      competitionScores.red += 1;
+    } else if (blue > red) {
+      winner = "BLUE";
+      competitionScores.blue += 1;
+    }
+
+    matchCount += 1;
+
+    // Add to match history
+    matchHistory.push({
+      matchNumber: matchCount,
+      redScore: red,
+      blueScore: blue,
+      winner: winner
+    });
 
     matchStarted = false;
 
-    return interaction.reply(`FINAL ${red}-${blue} Winner: ${winner}`);
+    // Reset teams for next match
+    draftTeams = { red: [], blue: [] };
+    captains = { red: null, blue: null };
+    queue = [];
+
+    // Update competition embed
+    await updateCompetitionEmbed();
+
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("⚽ MATCH FINISHED")
+          .addFields(
+            { name: "🔴 Red", value: `**${red}**`, inline: true },
+            { name: "🔵 Blue", value: `**${blue}**`, inline: true },
+            { name: "🏆 Winner", value: `**${winner}**`, inline: false },
+            { name: "📊 Competition Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false }
+          )
+          .setColor(winner === "RED" ? 0xFF0000 : winner === "BLUE" ? 0x0000FF : 0xFFFFFF)
+      ]
+    });
   }
 
   // =====================
-  // REMATCH
+  // REMATCH (UPDATED)
   // =====================
   if (interaction.commandName === "rematch") {
 
@@ -631,9 +726,76 @@ return interaction.reply("⚽ Match started successfully");
     });
   }
 
-  queue = [...lastMatch.red, ...lastMatch.blue];
+  draftTeams.red = [...lastMatch.red];
+  draftTeams.blue = [...lastMatch.blue];
+  captains.red = draftTeams.red[0];
+  captains.blue = draftTeams.blue[0];
+  queue = [];
 
-  return interaction.reply("🔁 Rematch ready");
+  await updateCompetitionEmbed();
+
+  return interaction.reply("🔁 Rematch ready - Teams restored");
+}
+
+  // =====================
+  // FINISH COMPETITION (NEW COMMAND)
+  // =====================
+  if (interaction.commandName === "finishcompetition") {
+
+  if (!competitionActive && matchCount === 0) {
+    return interaction.reply({
+      content: "❌ No competition in progress",
+      flags: 64
+    });
+  }
+
+  if (matchCount < 3) {
+    return interaction.reply({
+      content: `❌ Minimum 3 matches required to finish competition (${matchCount}/3)`,
+      flags: 64
+    });
+  }
+
+  let competitionWinner = "DRAW";
+  let winnerColor = 0xFFFFFF;
+
+  if (competitionScores.red > competitionScores.blue) {
+    competitionWinner = "🔴 RED TEAM";
+    winnerColor = 0xFF0000;
+  } else if (competitionScores.blue > competitionScores.red) {
+    competitionWinner = "🔵 BLUE TEAM";
+    winnerColor = 0x0000FF;
+  }
+
+  const matchHistoryText = matchHistory.length > 0
+    ? matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | ${m.winner}`).join("\n")
+    : "No matches";
+
+  const embed = new EmbedBuilder()
+    .setTitle("🏆 COMPETITION FINISHED")
+    .addFields(
+      { name: "🏅 CHAMPION", value: `**${competitionWinner}**`, inline: false },
+      { name: "📊 Final Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false },
+      { name: "📋 Match Summary", value: matchHistoryText, inline: false }
+    )
+    .setColor(winnerColor)
+    .setTimestamp();
+
+  await competitionMessage.edit({ embeds: [embed] });
+
+  // Reset competition
+  competitionActive = false;
+  competitionScores = { red: 0, blue: 0 };
+  matchHistory = [];
+  matchCount = 0;
+  draftTeams = { red: [], blue: [] };
+  captains = { red: null, blue: null };
+  queue = [];
+  matchStarted = false;
+
+  return interaction.reply({
+    embeds: [embed]
+  });
 }
 
   // =====================
