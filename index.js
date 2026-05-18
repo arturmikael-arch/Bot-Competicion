@@ -143,34 +143,34 @@ function buildAdminPanel() {
 
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId("startcompetition")
+      .setCustomId("btn_startcompetition")
       .setLabel("Start Competition")
       .setStyle(ButtonStyle.Success),
 
     new ButtonBuilder()
-      .setCustomId("autobalance")
+      .setCustomId("btn_autobalance")
       .setLabel("Auto Balance")
       .setStyle(ButtonStyle.Primary),
 
     new ButtonBuilder()
-      .setCustomId("startmatch")
+      .setCustomId("btn_startmatch")
       .setLabel("Start Match")
       .setStyle(ButtonStyle.Success)
   );
 
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId("rematch")
+      .setCustomId("btn_rematch")
       .setLabel("Rematch")
       .setStyle(ButtonStyle.Secondary),
 
     new ButtonBuilder()
-      .setCustomId("endcompetition")
+      .setCustomId("btn_endcompetition")
       .setLabel("End Early")
       .setStyle(ButtonStyle.Danger),
 
     new ButtonBuilder()
-      .setCustomId("finishcompetition")
+      .setCustomId("btn_finishcompetition")
       .setLabel("Finish Competition")
       .setStyle(ButtonStyle.Danger),
 
@@ -550,9 +550,9 @@ async function register() {
 }
 
 // =====================
-// READY EVENT (FIXED - using 'ready' not 'clientReady')
+// READY EVENT (FIXED - using 'clientReady' for v14)
 // =====================
-client.once("ready", () => {
+client.once("clientReady", () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
 });
 
@@ -624,7 +624,7 @@ client.on('interactionCreate', async interaction => {
   }
 
   // =====================
-  // BUTTON HANDLER (UNIFIED)
+  // BUTTON HANDLER (EXECUTE COMMANDS)
   // =====================
   if (interaction.isButton()) {
     if (!hasRole(member, ADMIN_ROLES)) {
@@ -640,11 +640,39 @@ client.on('interactionCreate', async interaction => {
       return interaction.showModal(buildFinalizeModal());
     }
 
-    if (["startcompetition", "autobalance", "startmatch", "rematch", "finishcompetition", "endcompetition"].includes(id)) {
-      return interaction.reply({
-        content: `Use /${id} command instead`,
-        flags: 64
-      });
+    // Map button IDs to command names
+    const buttonCommands = {
+      "btn_startcompetition": "startcompetition",
+      "btn_autobalance": "autobalance",
+      "btn_startmatch": "startmatch",
+      "btn_rematch": "rematch",
+      "btn_finishcompetition": "finishcompetition",
+      "btn_endcompetition": "endcompetition"
+    };
+
+    const command = buttonCommands[id];
+    
+    // If it's a valid button command, treat it as if it was a slash command
+    if (command) {
+      // Create a fake interaction object that mimics a slash command
+      const fakeInteraction = {
+        commandName: command,
+        isChatInputCommand: () => true,
+        isButton: () => false,
+        reply: interaction.reply.bind(interaction),
+        showModal: interaction.showModal.bind(interaction),
+        options: {
+          getUser: () => null,
+          getString: () => null,
+          getInteger: () => null
+        },
+        user: interaction.user,
+        guild: interaction.guild,
+        fetchReply: interaction.fetchReply.bind(interaction)
+      };
+
+      // Execute the command logic
+      return handleCommand(fakeInteraction, guild, member);
     }
   }
 
@@ -653,6 +681,13 @@ client.on('interactionCreate', async interaction => {
   // =====================
   if (!interaction.isChatInputCommand()) return;
 
+  return handleCommand(interaction, guild, member);
+});
+
+// =====================
+// COMMAND HANDLER FUNCTION
+// =====================
+async function handleCommand(interaction, guild, member) {
   const command = interaction.commandName;
 
   // =====================
@@ -1210,7 +1245,7 @@ client.on('interactionCreate', async interaction => {
       `Skill: ${playerData[member.id].skill}\nPosition: ${playerData[member.id].position}`
     );
   }
-});
+}
 
 // =====================
 // START BOT
