@@ -5,7 +5,13 @@ const {
   Routes,
   SlashCommandBuilder,
   EmbedBuilder,
-  ChannelType
+  ChannelType,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
 } = require('discord.js');
 
 require('dotenv').config();
@@ -26,13 +32,19 @@ const client = new Client({
 const ADMIN_ROLES = ["Admin", "Moderator", "Owner"];
 const PLAYER_ROLES = ["FC26 Player", "Member"];
 
-const RED_VC_ID = "1504096957407170611";
-const BLUE_VC_ID = "1504097182620581958";
 const MAIN_VC_ID = "1499698725893705872"; // Main channel to gather all players after competition ends
-
+const TEAM_CATEGORY_ID = "1502236927141875782"; // Category where temp team channels will be created
+const ADMIN_PANEL_CHANNEL_ID = "1499753429512487023"; // Optional: Channel for admin updates (can be same as MAIN_VC_ID if you want)
 // =====================
 // DATA
 // =====================
+let tempChannels = {
+  red: null,
+  blue: null
+};
+
+let originalVoiceChannels = {};
+
 let queue = [];
 const playerData = {};
 
@@ -125,6 +137,90 @@ function getVoicePlayers(guild) {
 }
 
 // =====================
+// COMPETITION CONTROL PANEL (NEW - BASIC VERSION)
+// =====================
+
+function buildAdminPanel() {
+
+  const embed = new EmbedBuilder()
+    .setTitle("⚙️ COMPETITION CONTROL PANEL")
+    .setDescription("Use buttons to control the match system quickly")
+    .setColor(0x00AEFF);
+
+  const row1 = new ActionRowBuilder().addComponents(
+
+    new ButtonBuilder()
+      .setCustomId("startcompetition")
+      .setLabel("Start Competition")
+      .setStyle(ButtonStyle.Success),
+
+    new ButtonBuilder()
+      .setCustomId("autobalance")
+      .setLabel("Auto Balance")
+      .setStyle(ButtonStyle.Primary),
+
+    new ButtonBuilder()
+      .setCustomId("startmatch")
+      .setLabel("Start Match")
+      .setStyle(ButtonStyle.Success)
+  );
+
+  const row2 = new ActionRowBuilder().addComponents(
+
+    new ButtonBuilder()
+      .setCustomId("rematch")
+      .setLabel("Rematch")
+      .setStyle(ButtonStyle.Secondary),
+
+    new ButtonBuilder()
+      .setCustomId("endcompetition")
+      .setLabel("End Early")
+      .setStyle(ButtonStyle.Danger),
+
+    new ButtonBuilder()
+      .setCustomId("finishcompetition")
+      .setLabel("Finish Competition")
+      .setStyle(ButtonStyle.Danger),
+
+    new ButtonBuilder()
+      .setCustomId("open_finalize_modal")
+      .setLabel("Finalize Match")
+      .setStyle(ButtonStyle.Primary)  
+  );
+
+  return { embeds: [embed], components: [row1, row2] };
+}
+
+// =====================
+// FinalizeModal (NEW - FOR ADMIN PANEL)
+// =====================
+function buildFinalizeModal() {
+
+  const modal = new ModalBuilder()
+    .setCustomId("finalize_modal")
+    .setTitle("Finalize Match Score");
+
+  const redScore = new TextInputBuilder()
+    .setCustomId("red_score")
+    .setLabel("Red Team Goals")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  const blueScore = new TextInputBuilder()
+    .setCustomId("blue_score")
+    .setLabel("Blue Team Goals")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  const row1 = new ActionRowBuilder().addComponents(redScore);
+  const row2 = new ActionRowBuilder().addComponents(blueScore);
+
+  modal.addComponents(row1, row2);
+
+  return modal;
+}
+
+// =====================
 // BUILD COMPETITION EMBED (NEW)
 // =====================
 function buildCompetitionEmbed() {
@@ -147,70 +243,93 @@ function buildCompetitionEmbed() {
 }
 
 // =====================
-// MOVE ALL PLAYERS TO MAIN CHANNEL
+// RESTORE PLAYERS + DELETE TEMP CHANNELS
 // =====================
 async function moveAllPlayersToMain(guild) {
 
   try {
 
-    const mainChannel =
-      await guild.channels
-        .fetch(MAIN_VC_ID)
-        .catch(() => null);
-
-    if (!mainChannel) return;
-
-    // get voice channels
-    const redChannel =
-      await guild.channels
-        .fetch(RED_VC_ID)
-        .catch(() => null);
-
-    const blueChannel =
-      await guild.channels
-        .fetch(BLUE_VC_ID)
-        .catch(() => null);
-
-    // unique player ids
-    const allPlayers = new Set([
-      ...draftTeams.red,
-      ...draftTeams.blue
-    ]);
-
-    // include anyone still inside vc
-    if (redChannel?.members) {
-      redChannel.members.forEach(m =>
-        allPlayers.add(m.id)
-      );
-    }
-
-    if (blueChannel?.members) {
-      blueChannel.members.forEach(m =>
-        allPlayers.add(m.id)
-      );
-    }
-
-    // move everybody
-    for (const id of allPlayers) {
+    // restore EVERY tracked player
+    for (const playerId of Object.keys(originalVoiceChannels)) {
 
       const member =
         await guild.members
-          .fetch(id)
+          .fetch(playerId)
           .catch(() => null);
 
-      if (member?.voice?.channel) {
+      if (!member) continue;
+
+      // player must still be in VC
+      if (!member.voice?.channel) continue;
+
+      const originalChannelId =
+        originalVoiceChannels[playerId];
+
+      const originalChannel =
+        guild.channels.cache.get(originalChannelId);
+
+      // restore original channel
+      if (originalChannel) {
 
         await member.voice
-          .setChannel(MAIN_VC_ID)
-          .catch(() => null);
+          .setChannel(originalChannel)
+          .catch(console.error);
+      }
+      else {
+
+        // fallback
+        const mainChannel =
+          guild.channels.cache.get(MAIN_VC_ID);
+
+        if (mainChannel) {
+
+          await member.voice
+            .setChannel(mainChannel)
+            .catch(console.error);
+        }
       }
     }
+
+    // =====================
+    // DELETE TEMP CHANNELS
+    // =====================
+
+    if (tempChannels.red) {
+
+      const redChannel =
+        guild.channels.cache.get(tempChannels.red);
+
+      if (redChannel) {
+        await redChannel.delete().catch(() => null);
+      }
+    }
+
+    if (tempChannels.blue) {
+
+      const blueChannel =
+        guild.channels.cache.get(tempChannels.blue);
+
+      if (blueChannel) {
+        await blueChannel.delete().catch(() => null);
+      }
+    }
+
+    // =====================
+    // RESET STORAGE
+    // =====================
+
+    tempChannels = {
+      red: null,
+      blue: null
+    };
+
+    originalVoiceChannels = {};
 
   }
   catch (err) {
 
     console.error(
-      "Error moving players:",
+      "Error restoring players:",
       err
     );
   }
@@ -341,8 +460,16 @@ const commands = [
     .setDescription('Finish competition and declare winner'),
 
   new SlashCommandBuilder()
+    .setName('endcompetition')
+    .setDescription('End competition early and restore all players'),  
+
+  new SlashCommandBuilder()
     .setName('stats')
-    .setDescription('Stats')
+    .setDescription('Stats'),
+
+   new SlashCommandBuilder()
+  .setName('panel')
+  .setDescription('Send admin control panel') 
 
 ].map(c => c.toJSON());
 
@@ -364,20 +491,159 @@ async function register() {
 }
 
 // =====================
-// MOVE TEAMS TO VOICE CHANNELS (FIXED - ADDED MISSING FUNCTION)
+// CREATE PRIVATE TEAM CHANNELS
 // =====================
-async function moveTeams(guild, redTeam, blueTeam) {
-  for (const id of redTeam) {
-    const member = await guild.members.fetch(id).catch(() => null);
-    if (member?.voice?.channel) {
-      await member.voice.setChannel(RED_VC_ID);
+async function createTeamChannels(guild) {
+
+  // delete old channels
+  if (tempChannels.red) {
+
+    const oldRed =
+      guild.channels.cache.get(tempChannels.red);
+
+    if (oldRed) {
+      await oldRed.delete().catch(() => null);
     }
   }
 
+  if (tempChannels.blue) {
+
+    const oldBlue =
+      guild.channels.cache.get(tempChannels.blue);
+
+    if (oldBlue) {
+      await oldBlue.delete().catch(() => null);
+    }
+  }
+
+  // roles allowed to see channels
+  const allowedRoles = [
+    "Owner",
+    "Admin",
+    "Bot",
+    "Moderador",
+    "FC26 Player",
+    "Member"
+  ];
+
+  // build permissions
+  const permissions = [
+
+    // deny everyone
+    {
+      id: guild.roles.everyone.id,
+      deny: ['ViewChannel', 'Connect']
+    }
+  ];
+
+  // allow selected roles
+  allowedRoles.forEach(roleName => {
+
+    const role =
+      guild.roles.cache.find(r => r.name === roleName);
+
+    if (role) {
+
+      permissions.push({
+        id: role.id,
+        allow: ['ViewChannel', 'Connect', 'Speak']
+      });
+    }
+  });
+
+  // =====================
+  // CREATE RED CHANNEL
+  // =====================
+  const redChannel =
+    await guild.channels.create({
+
+      name: "🔴 Red Team",
+
+      type: ChannelType.GuildVoice,
+
+      parent: TEAM_CATEGORY_ID,
+
+      permissionOverwrites: permissions
+    });
+
+  // =====================
+  // CREATE BLUE CHANNEL
+  // =====================
+  const blueChannel =
+    await guild.channels.create({
+
+      name: "🔵 Blue Team",
+
+      type: ChannelType.GuildVoice,
+
+      parent: TEAM_CATEGORY_ID,
+
+      permissionOverwrites: permissions
+    });
+
+  tempChannels.red = redChannel.id;
+  tempChannels.blue = blueChannel.id;
+}
+
+// =====================
+// MOVE TEAMS TO TEMP CHANNELS
+// =====================
+async function moveTeams(guild, redTeam, blueTeam) {
+
+  // create channels if missing
+  if (!tempChannels.red || !tempChannels.blue) {
+    await createTeamChannels(guild);
+  }
+
+  // =====================
+  // MOVE RED TEAM
+  // =====================
+  for (const id of redTeam) {
+
+    const member =
+      await guild.members.fetch(id).catch(() => null);
+
+    if (!member?.voice?.channel) continue;
+
+    // save ORIGINAL channel ONLY ONCE
+    if (!originalVoiceChannels[id]) {
+
+      originalVoiceChannels[id] =
+        member.voice.channel.id;
+    }
+
+    // move only if not already there
+    if (member.voice.channel.id !== tempChannels.red) {
+
+      await member.voice
+        .setChannel(tempChannels.red)
+        .catch(console.error);
+    }
+  }
+
+  // =====================
+  // MOVE BLUE TEAM
+  // =====================
   for (const id of blueTeam) {
-    const member = await guild.members.fetch(id).catch(() => null);
-    if (member?.voice?.channel) {
-      await member.voice.setChannel(BLUE_VC_ID);
+
+    const member =
+      await guild.members.fetch(id).catch(() => null);
+
+    if (!member?.voice?.channel) continue;
+
+    // save ORIGINAL channel ONLY ONCE
+    if (!originalVoiceChannels[id]) {
+
+      originalVoiceChannels[id] =
+        member.voice.channel.id;
+    }
+
+    // move only if not already there
+    if (member.voice.channel.id !== tempChannels.blue) {
+
+      await member.voice
+        .setChannel(tempChannels.blue)
+        .catch(console.error);
     }
   }
 }
@@ -408,6 +674,7 @@ function getAllVoicePlayers(guild) {
 // =====================
 // MAIN
 // =====================
+
 client.on('interactionCreate', async interaction => {
 
   const guild = interaction.guild;
@@ -417,7 +684,7 @@ client.on('interactionCreate', async interaction => {
   if (!member) return;
 
   // =====================
-  // BUTTON INTERACTIONS (HANDLE FIRST - BEFORE COMMAND CHECK)
+  // BUTTONS FIRST
   // =====================
   if (interaction.isButton()) {
 
@@ -428,352 +695,209 @@ client.on('interactionCreate', async interaction => {
       });
     }
 
-    const buttonId = interaction.customId;
+    const id = interaction.customId;
 
-    // Execute the corresponding command based on button ID
-    if (buttonId === "startcompetition") {
-
-      queue = getAllVoicePlayers(guild);
-      queue.forEach(id => ensurePlayer(id));
-      draftTeams = { red: [], blue: [] };
-      captains = { red: null, blue: null };
-      draftMode = true;
-
-      competitionScores = { red: 0, blue: 0 };
-      matchHistory = [];
-      matchCount = 0;
-      pickedPlayers = new Set();
-
-      const embed = new EmbedBuilder()
-        .setTitle("🏆 COMPETITION STARTED")
-        .setDescription(
-          queue.map(id =>
-            `• <@${id}> — **${playerData[id]?.position || "MID"}**`
-          ).join("\n") || "No players"
-        )
-        .addFields(
-          { name: "🔴 Red Wins", value: "**0**", inline: true },
-          { name: "🔵 Blue Wins", value: "**0**", inline: true }
-        )
-        .setColor(0x00AEFF);
-
-      await interaction.reply({ embeds: [embed] });
-      competitionMessage = await interaction.fetchReply();
-      return;
+    if (id === "open_finalize_modal") {
+      return interaction.showModal(buildFinalizeModal());
     }
 
-    if (buttonId === "autobalance") {
+    if (id === "startcompetition") {
+      return interaction.reply({ content: "Use /startcompetition command instead", flags: 64 });
+    }
 
-      const players = getAllVoicePlayers(guild);
-      
-      if (draftMode && captains.red !== null && captains.blue !== null) {
-        return interaction.reply({
-          content: "❌ Captains already selected. Auto balance only works in free queue.",
-          flags: 64
-        });
+    if (id === "autobalance") {
+      return interaction.reply({ content: "Use /autobalance command instead", flags: 64 });
+    }
+
+    if (id === "startmatch") {
+      return interaction.reply({ content: "Use /startmatch command instead", flags: 64 });
+    }
+
+    if (id === "rematch") {
+      return interaction.reply({ content: "Use /rematch command instead", flags: 64 });
+    }
+
+    if (id === "finishcompetition") {
+      return interaction.reply({ content: "Use /finishcompetition command instead", flags: 64 });
+    }
+
+    if (id === "endcompetition") {
+      return interaction.reply({ content: "Use /endcompetition command instead", flags: 64 });
+    }
+  }
+
+  // =====================
+  // MODALS
+  // =====================
+  if (interaction.isModalSubmit()) {
+
+    if (interaction.customId === "finalize_modal") {
+
+      const red = parseInt(interaction.fields.getTextInputValue("red_score"));
+      const blue = parseInt(interaction.fields.getTextInputValue("blue_score"));
+
+      if (isNaN(red) || isNaN(blue)) {
+        return interaction.reply({ content: "❌ Invalid scores", flags: 64 });
       }
 
-      if (players.length < 2) {
-        return interaction.reply({
-          content: "❌ Not enough players in voice channels",
-          flags: 64
-        });
+      if (!matchStarted) {
+        return interaction.reply({ content: "❌ No match in progress", flags: 64 });
       }
 
-      let gks = [];
-      let defs = [];
-      let mids = [];
-      let atts = [];
+      let winner = "DRAW";
 
-      for (const id of players) {
-        ensurePlayer(id);
-        const pos = playerData[id].position;
-
-        if (pos === "GK") gks.push(id);
-        else if (pos === "DEF") defs.push(id);
-        else if (pos === "ATT") atts.push(id);
-        else mids.push(id);
+      if (red > blue) {
+        winner = "RED";
+        competitionScores.red += 1;
+      } else if (blue > red) {
+        winner = "BLUE";
+        competitionScores.blue += 1;
       }
 
-      const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
+      matchCount += 1;
 
-      gks = shuffle(gks);
-      defs = shuffle(defs);
-      mids = shuffle(mids);
-      atts = shuffle(atts);
+      matchHistory.push({
+        matchNumber: matchCount,
+        redScore: red,
+        blueScore: blue,
+        winner
+      });
 
-      const teamRed = [];
-      const teamBlue = [];
-
-      if (gks.length >= 2) {
-        teamRed.push(gks[0]);
-        teamBlue.push(gks[1]);
-      } else if (gks.length === 1) {
-        if (Math.random() > 0.5) {
-          teamRed.push(gks[0]);
-        } else {
-          teamBlue.push(gks[0]);
-        }
-      }
-
-      const used = new Set([...teamRed, ...teamBlue]);
-      const fieldPlayers = players.filter(p => !used.has(p));
-
-      for (const id of fieldPlayers) {
-        if (teamRed.length <= teamBlue.length) {
-          teamRed.push(id);
-        } else {
-          teamBlue.push(id);
-        }
-      }
-
-      draftTeams.red = teamRed;
-      draftTeams.blue = teamBlue;
+      matchStarted = false;
+      draftTeams = { red: [], blue: [] };
+      captains = { red: null, blue: null };
       queue = [];
-      captains.red = teamRed[0] || null;
-      captains.blue = teamBlue[0] || null;
-
-      for (const id of teamRed) {
-        const m = await guild.members.fetch(id).catch(() => null);
-        if (m?.voice?.channel) {
-          await m.voice.setChannel(RED_VC_ID);
-        }
-      }
-
-      for (const id of teamBlue) {
-        const m = await guild.members.fetch(id).catch(() => null);
-        if (m?.voice?.channel) {
-          await m.voice.setChannel(BLUE_VC_ID);
-        }
-      }
 
       await updateCompetitionEmbed();
 
       return interaction.reply({
         embeds: [
           new EmbedBuilder()
-            .setTitle("🤖 POSITION-BASED AUTO BALANCE")
+            .setTitle("⚽ MATCH FINISHED")
             .addFields(
-              {
-                name: "🔴 Red Team",
-                value: teamRed.map(id => `<@${id}> (${playerData[id]?.position})`).join("\n") || "None"
-              },
-              {
-                name: "🔵 Blue Team",
-                value: teamBlue.map(id => `<@${id}> (${playerData[id]?.position})`).join("\n") || "None"
-              }
+              { name: "🔴 Red", value: `${red}`, inline: true },
+              { name: "🔵 Blue", value: `${blue}`, inline: true },
+              { name: "🏆 Winner", value: winner, inline: false }
             )
             .setColor(0x00AEFF)
         ]
       });
     }
-
-    if (buttonId === "startmatch") {
-
-      const totalPlayers = draftTeams.red.length + draftTeams.blue.length;
-
-      if (totalPlayers < 2) {
-        return interaction.reply({
-          content: "❌ Not enough players to start a match (min 2 required)",
-          flags: 64
-        });
-      }
-
-      if (!captains.red || !captains.blue) {
-        const allPlayers = [...queue, ...draftTeams.red, ...draftTeams.blue];
-        const uniquePlayers = [...new Set(allPlayers)];
-
-        if (uniquePlayers.length < 2) {
-          return interaction.reply({
-            content: "❌ Not enough players to auto-balance",
-            flags: 64
-          });
-        }
-
-        const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
-        const shuffled = shuffle(uniquePlayers);
-        const mid = Math.ceil(shuffled.length / 2);
-
-        draftTeams.red = shuffled.slice(0, mid);
-        draftTeams.blue = shuffled.slice(mid);
-        captains.red = draftTeams.red[0];
-        captains.blue = draftTeams.blue[0];
-      }
-
-      if (draftTeams.red.length < 1 || draftTeams.blue.length < 1) {
-        return interaction.reply({
-          content: "❌ Teams are not properly formed",
-          flags: 64
-        });
-      }
-
-      lastMatch = {
-        red: [...draftTeams.red],
-        blue: [...draftTeams.blue]
-      };
-
-      matchStarted = true;
-      await moveTeams(guild, draftTeams.red, draftTeams.blue);
-      draftMode = false;
-
-      return interaction.reply("⚽ Match started successfully");
-    }
-
-    if (buttonId === "rematch") {
-
-      if (!lastMatch) {
-        return interaction.reply({
-          content: "❌ No previous match found",
-          flags: 64
-        });
-      }
-
-      draftTeams.red = [...lastMatch.red];
-      draftTeams.blue = [...lastMatch.blue];
-      captains.red = draftTeams.red[0];
-      captains.blue = draftTeams.blue[0];
-      queue = [];
-
-      await moveTeams(guild, draftTeams.red, draftTeams.blue);
-      matchStarted = true;
-      await updateCompetitionEmbed();
-
-      return interaction.reply("🔁 Rematch started successfully");
-    }
-
-    if (buttonId === "finishcompetition") {
-
-      if (!competitionActive && matchCount === 0) {
-        return interaction.reply({
-          content: "❌ No competition in progress",
-          flags: 64
-        });
-      }
-
-      if (matchCount < 3) {
-        return interaction.reply({
-          content: `❌ Minimum 3 matches required to finish competition (${matchCount}/3)`,
-          flags: 64
-        });
-      }
-
-      let competitionWinner = "DRAW";
-      let winnerColor = 0xFFFFFF;
-
-      if (competitionScores.red > competitionScores.blue) {
-        competitionWinner = "🔴 RED TEAM";
-        winnerColor = 0xFF0000;
-      } else if (competitionScores.blue > competitionScores.red) {
-        competitionWinner = "🔵 BLUE TEAM";
-        winnerColor = 0x0000FF;
-      }
-
-      const matchHistoryText = matchHistory.length > 0
-        ? matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | ${m.winner}`).join("\n")
-        : "No matches";
-
-      const embed = new EmbedBuilder()
-        .setTitle("🏆 COMPETITION FINISHED")
-        .addFields(
-          { name: "🏅 CHAMPION", value: `**${competitionWinner}**`, inline: false },
-          { name: "📊 Final Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false },
-          { name: "📋 Match Summary", value: matchHistoryText, inline: false }
-        )
-        .setColor(winnerColor)
-        .setTimestamp();
-
-      await competitionMessage.edit({ embeds: [embed] });
-      await moveAllPlayersToMain(guild);
-
-      competitionActive = false;
-      competitionScores = { red: 0, blue: 0 };
-      matchHistory = [];
-      matchCount = 0;
-      draftTeams = { red: [], blue: [] };
-      captains = { red: null, blue: null };
-      queue = [];
-      matchStarted = false;
-      draftMode = false;
-      pickedPlayers = new Set();
-
-      return interaction.reply({ embeds: [embed] });
-    }
-
-    if (buttonId === "endcompetition") {
-
-      if (!competitionMessage) {
-        return interaction.reply({
-          content: "❌ No competition running",
-          flags: 64
-        });
-      }
-
-      if (matchCount === 0 && !hasRole(member, ADMIN_ROLES)) {
-        return interaction.reply({
-          content: "❌ You must play at least 1 match before ending competition",
-          flags: 64
-        });
-      }
-
-      let winner = "DRAW";
-
-      if (competitionScores.red > competitionScores.blue) {
-        winner = "🔴 RED TEAM";
-      } else if (competitionScores.blue > competitionScores.red) {
-        winner = "🔵 BLUE TEAM";
-      }
-
-      const embed = new EmbedBuilder()
-        .setTitle("🏁 COMPETITION ENDED EARLY")
-        .addFields(
-          { name: "🏆 Winner", value: winner, inline: false },
-          { name: "📊 Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false },
-          { name: "🎮 Matches Played", value: `${matchCount}`, inline: false }
-        )
-        .setColor(0xFFA500)
-        .setTimestamp();
-
-      await competitionMessage.edit({ embeds: [embed] });
-      await moveAllPlayersToMain(guild);
-
-      competitionActive = false;
-      competitionScores = { red: 0, blue: 0 };
-      matchHistory = [];
-      matchCount = 0;
-      draftTeams = { red: [], blue: [] };
-      captains = { red: null, blue: null };
-      queue = [];
-      matchStarted = false;
-      draftMode = false;
-      pickedPlayers = new Set();
-      lastMatch = null;
-
-      return interaction.reply({
-        content: "🏁 Competition ended early and all players restored"
-      });
-    }
-
-    return;
   }
 
   // =====================
-  // SLASH COMMANDS (HANDLE AFTER BUTTONS)
+  // SLASH COMMANDS
   // =====================
   if (!interaction.isChatInputCommand()) return;
 
-  if (!canUse(member, interaction.commandName)) {
-    return interaction.reply({ content: "No permission", flags: 64 });
-  }
+  const guild2 = interaction.guild;
+  const member2 = member;
+  const cmdMember = member2;
 
   const command = interaction.commandName;
 
 // =====================
-// AUTOBALANCE
+// ADMIN PANEL
 // =====================
-if (command === "autobalance") {
+if (interaction.commandName === "panel") {
+
+  const channel =
+    await client.channels.fetch(ADMIN_PANEL_CHANNEL_ID);
+
+  if (!channel) {
+    return interaction.reply({
+      content: "❌ Admin panel channel not found",
+      flags: 64
+    });
+  }
+
+  await channel.send(buildAdminPanel());
+
+  return interaction.reply({
+    content: "✅ Admin panel sent",
+    flags: 64
+  });
+}
+
+// =====================
+// Buton interactions for admin panel
+// =====================
+if (interaction.isButton()) {
+
+  const guild = interaction.guild;
+  const member = await guild.members.fetch(interaction.user.id);
+
+  if (!hasRole(member, ADMIN_ROLES)) {
+    return interaction.reply({
+      content: "❌ No permission",
+      flags: 64
+    });
+  }
+
+  const id = interaction.customId;
+
+  // =====================
+  // OPEN FINALIZE MODAL
+  // =====================
+  if (id === "open_finalize_modal") {
+    return interaction.showModal(buildFinalizeModal());
+  }
+
+  // =====================
+  // DIRECT ACTION BUTTONS
+  // =====================
+
+  if (id === "startcompetition") {
+    return interaction.reply({
+      content: "Use /startcompetition command instead",
+      flags: 64
+    });
+  }
+
+  if (id === "autobalance") {
+    return interaction.reply({
+      content: "Use /autobalance command instead",
+      flags: 64
+    });
+  }
+
+  if (id === "startmatch") {
+    return interaction.reply({
+      content: "Use /startmatch command instead",
+      flags: 64
+    });
+  }
+
+  if (id === "rematch") {
+    return interaction.reply({
+      content: "Use /rematch command instead",
+      flags: 64
+    });
+  }
+
+  if (id === "finishcompetition") {
+    return interaction.reply({
+      content: "Use /finishcompetition command instead",
+      flags: 64
+    });
+  }
+
+  if (id === "endcompetition") {
+    return interaction.reply({
+      content: "Use /endcompetition command instead",
+      flags: 64
+    });
+  }
+}
+
+// =====================
+// AUTOBALANCE (FIXED - PROPER VALIDATION)
+// =====================
+if (interaction.commandName === "autobalance") {
 
   const players = getAllVoicePlayers(guild);
   
+  // Check if captains were manually selected (using /captains command)
   if (draftMode && captains.red !== null && captains.blue !== null) {
     return interaction.reply({
       content: "❌ Captains already selected. Auto balance only works in free queue.",
@@ -788,6 +912,9 @@ if (command === "autobalance") {
     });
   }
 
+  // =====================
+  // SPLIT BY POSITION
+  // =====================
   let gks = [];
   let defs = [];
   let mids = [];
@@ -814,20 +941,42 @@ if (command === "autobalance") {
   const teamRed = [];
   const teamBlue = [];
 
-  if (gks.length >= 2) {
+  // =====================
+// 1 GK PER TEAM (FIXED)
+// =====================
+
+// 2 or more GKs
+if (gks.length >= 2) {
+
+  teamRed.push(gks[0]);
+  teamBlue.push(gks[1]);
+
+}
+
+// ONLY 1 GK
+else if (gks.length === 1) {
+
+  if (Math.random() > 0.5) {
     teamRed.push(gks[0]);
-    teamBlue.push(gks[1]);
-  } else if (gks.length === 1) {
-    if (Math.random() > 0.5) {
-      teamRed.push(gks[0]);
-    } else {
-      teamBlue.push(gks[0]);
-    }
+  } else {
+    teamBlue.push(gks[0]);
   }
 
-  const used = new Set([...teamRed, ...teamBlue]);
-  const fieldPlayers = players.filter(p => !used.has(p));
+}
 
+  // remove assigned players from pool
+const used = new Set([
+  ...teamRed,
+  ...teamBlue
+]);
+
+const fieldPlayers = players.filter(
+  p => !used.has(p)
+);
+
+  // =====================
+  // BALANCE FIELD PLAYERS
+  // =====================
   for (const id of fieldPlayers) {
     if (teamRed.length <= teamBlue.length) {
       teamRed.push(id);
@@ -836,26 +985,24 @@ if (command === "autobalance") {
     }
   }
 
+  // =====================
+  // SAVE STATE
+  // =====================
   draftTeams.red = teamRed;
   draftTeams.blue = teamBlue;
+
   queue = [];
+
+  // captains optional (GK default)
   captains.red = teamRed[0] || null;
   captains.blue = teamBlue[0] || null;
 
-  for (const id of teamRed) {
-    const m = await guild.members.fetch(id).catch(() => null);
-    if (m?.voice?.channel) {
-      await m.voice.setChannel(RED_VC_ID);
-    }
-  }
+  // =====================
+  // MOVE TO VOICE CHANNELS
+  // =====================
+   await moveTeams(guild, teamRed, teamBlue);
 
-  for (const id of teamBlue) {
-    const m = await guild.members.fetch(id).catch(() => null);
-    if (m?.voice?.channel) {
-      await m.voice.setChannel(BLUE_VC_ID);
-    }
-  }
-
+  // Update competition embed with new teams
   await updateCompetitionEmbed();
 
   return interaction.reply({
@@ -878,9 +1025,9 @@ if (command === "autobalance") {
 }
 
 // =====================
-// JOIN
-// =====================
-if (command === "join") {
+  // JOIN
+  // =====================
+if (interaction.commandName === "join") {
 
   const pos = interaction.options.getString("position").toUpperCase();
 
@@ -889,6 +1036,7 @@ if (command === "join") {
   }
 
   ensurePlayer(member.id);
+
   playerData[member.id].position = pos;
 
   if (!queue.includes(member.id)) {
@@ -900,18 +1048,20 @@ if (command === "join") {
   return interaction.reply(`✅ Joined as ${pos}`);
 }
 
-// =====================
-// START COMPETITION
-// =====================
-if (command === "startcompetition") {
+  // =====================
+  // START COMPETITION (NEW FEATURE)
+  // =====================
+  if (interaction.commandName === "startcompetition") {
 
   queue = getAllVoicePlayers(guild);
+
   queue.forEach(id => ensurePlayer(id));
 
   draftTeams = { red: [], blue: [] };
   captains = { red: null, blue: null };
   draftMode = true;
 
+  // Reset competition data
   competitionScores = { red: 0, blue: 0 };
   matchHistory = [];
   matchCount = 0;
@@ -931,70 +1081,78 @@ if (command === "startcompetition") {
     .setColor(0x00AEFF);
 
   await interaction.reply({ embeds: [embed] });
+
   competitionMessage = await interaction.fetchReply();
 
   return;
 }
 
-// =====================
-// CAPTAINS
-// =====================
-if (command === "captains") {
+  // =====================
+  // CAPTAINS
+  // =====================
+  if (interaction.commandName === "captains") {
 
-  captains.red = interaction.options.getUser("red").id;
-  captains.blue = interaction.options.getUser("blue").id;
+    captains.red = interaction.options.getUser("red").id;
+    captains.blue = interaction.options.getUser("blue").id;
 
-  draftTeams.red = [captains.red];
-  draftTeams.blue = [captains.blue];
+    draftTeams.red = [captains.red];
+    draftTeams.blue = [captains.blue];
 
-  queue = queue.filter(p => p !== captains.red && p !== captains.blue);
+    queue = queue.filter(p => p !== captains.red && p !== captains.blue);
 
-  currentTurn = "red";
+    currentTurn = "red";
 
-  await updateCompetitionEmbed();
+    await updateCompetitionEmbed();
 
-  return interaction.reply("Captains set");
-}
-
-// =====================
-// PICK
-// =====================
-if (command === "pick") {
-
-  const player = interaction.options.getUser("player").id;
-
-  if (pickedPlayers.has(player)) {
-    return interaction.reply({
-      content: `❌ <@${player}> has already been picked in this competition!`,
-      flags: 64
-    });
+    return interaction.reply("Captains set");
   }
 
-  if (!queue.includes(player)) {
-    return interaction.reply("Not in queue");
+  // =====================
+  // PICK (REMOVES PLAYER FROM EMBED LIVE - FIXED TO PREVENT DUPLICATE PICKS)
+  // =====================
+  if (interaction.commandName === "pick") {
+
+    const player = interaction.options.getUser("player").id;
+
+    // =====================
+    // CHECK IF PLAYER ALREADY PICKED IN THIS COMPETITION
+    // =====================
+    if (pickedPlayers.has(player)) {
+      return interaction.reply({
+        content: `❌ <@${player}> has already been picked in this competition!`,
+        flags: 64
+      });
+    }
+
+    if (!queue.includes(player)) {
+      return interaction.reply("Not in queue");
+    }
+
+    if (member.id !== captains[currentTurn]) {
+      return interaction.reply("Not your turn");
+    }
+
+    draftTeams[currentTurn].push(player);
+    queue = queue.filter(p => p !== player);
+    pickedPlayers.add(player); // Add to picked set
+
+    currentTurn = currentTurn === "red" ? "blue" : "red";
+
+    await updateCompetitionEmbed();
+
+    return interaction.reply(`Picked <@${player}>`);
   }
 
-  if (member.id !== captains[currentTurn]) {
-    return interaction.reply("Not your turn");
-  }
-
-  draftTeams[currentTurn].push(player);
-  queue = queue.filter(p => p !== player);
-  pickedPlayers.add(player);
-
-  currentTurn = currentTurn === "red" ? "blue" : "red";
-
-  await updateCompetitionEmbed();
-
-  return interaction.reply(`Picked <@${player}>`);
-}
-
+  // =====================
+// START MATCH (FIXED + AUTO BALANCE FALLBACK)
 // =====================
-// START MATCH
-// =====================
-if (command === "startmatch") {
+if (interaction.commandName === "startmatch") {
 
-  const totalPlayers = draftTeams.red.length + draftTeams.blue.length;
+  // =====================
+  // ❌ PREVENT INVALID MATCH
+  // =====================
+  const totalPlayers =
+    draftTeams.red.length + draftTeams.blue.length;
 
   if (totalPlayers < 2) {
     return interaction.reply({
@@ -1003,9 +1161,16 @@ if (command === "startmatch") {
     });
   }
 
+  // =====================
+  // ⚠ AUTO BALANCE IF NO CAPTAINS
+  // =====================
   if (!captains.red || !captains.blue) {
 
-    const allPlayers = [...queue, ...draftTeams.red, ...draftTeams.blue];
+    const allPlayers = [...queue];
+
+    // include already joined draft players too
+    allPlayers.push(...draftTeams.red, ...draftTeams.blue);
+
     const uniquePlayers = [...new Set(allPlayers)];
 
     if (uniquePlayers.length < 2) {
@@ -1016,15 +1181,21 @@ if (command === "startmatch") {
     }
 
     const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
+
     const shuffled = shuffle(uniquePlayers);
+
     const mid = Math.ceil(shuffled.length / 2);
 
     draftTeams.red = shuffled.slice(0, mid);
     draftTeams.blue = shuffled.slice(mid);
+
     captains.red = draftTeams.red[0];
     captains.blue = draftTeams.blue[0];
   }
 
+  // =====================
+  // FINAL VALIDATION
+  // =====================
   if (draftTeams.red.length < 1 || draftTeams.blue.length < 1) {
     return interaction.reply({
       content: "❌ Teams are not properly formed",
@@ -1033,77 +1204,83 @@ if (command === "startmatch") {
   }
 
   lastMatch = {
-    red: [...draftTeams.red],
-    blue: [...draftTeams.blue]
-  };
+  red: [...draftTeams.red],
+  blue: [...draftTeams.blue]
+};
 
-  matchStarted = true;
-  await moveTeams(guild, draftTeams.red, draftTeams.blue);
-  draftMode = false;
+matchStarted = true;
 
-  return interaction.reply("⚽ Match started successfully");
+await moveTeams(guild, draftTeams.red, draftTeams.blue);
+
+draftMode = false;
+
+return interaction.reply("⚽ Match started successfully");
+
 }
 
-// =====================
-// FINALIZE
-// =====================
-if (command === "finalize") {
+  // =====================
+  // FINALIZE (UPDATED - ADD TO MATCH HISTORY)
+  // =====================
+  if (interaction.commandName === "finalize") {
 
-  if (!matchStarted) {
+    if (!matchStarted) {
+      return interaction.reply({
+        content: "❌ No match in progress",
+        flags: 64
+      });
+    }
+
+    const red = interaction.options.getInteger("red");
+    const blue = interaction.options.getInteger("blue");
+
+    let winner = "DRAW";
+    if (red > blue) {
+      winner = "RED";
+      competitionScores.red += 1;
+    } else if (blue > red) {
+      winner = "BLUE";
+      competitionScores.blue += 1;
+    }
+
+    matchCount += 1;
+
+    // Add to match history
+    matchHistory.push({
+      matchNumber: matchCount,
+      redScore: red,
+      blueScore: blue,
+      winner: winner
+    });
+
+    matchStarted = false;
+
+    // Reset teams for next match
+    draftTeams = { red: [], blue: [] };
+    captains = { red: null, blue: null };
+    queue = [];
+
+    // Update competition embed
+    await updateCompetitionEmbed();
+
     return interaction.reply({
-      content: "❌ No match in progress",
-      flags: 64
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("⚽ MATCH FINISHED")
+          .addFields(
+            { name: "🔴 Red", value: `**${red}**`, inline: true },
+            { name: "🔵 Blue", value: `**${blue}**`, inline: true },
+            { name: "🏆 Winner", value: `**${winner}**`, inline: false },
+            { name: "📊 Competition Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false }
+          )
+          .setColor(winner === "RED" ? 0xFF0000 : winner === "BLUE" ? 0x0000FF : 0xFFFFFF)
+      ]
     });
   }
 
-  const red = interaction.options.getInteger("red");
-  const blue = interaction.options.getInteger("blue");
-
-  let winner = "DRAW";
-  if (red > blue) {
-    winner = "RED";
-    competitionScores.red += 1;
-  } else if (blue > red) {
-    winner = "BLUE";
-    competitionScores.blue += 1;
-  }
-
-  matchCount += 1;
-
-  matchHistory.push({
-    matchNumber: matchCount,
-    redScore: red,
-    blueScore: blue,
-    winner: winner
-  });
-
-  matchStarted = false;
-
-  draftTeams = { red: [], blue: [] };
-  captains = { red: null, blue: null };
-  queue = [];
-
-  await updateCompetitionEmbed();
-
-  return interaction.reply({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle("⚽ MATCH FINISHED")
-        .addFields(
-          { name: "🔴 Red", value: `**${red}**`, inline: true },
-          { name: "🔵 Blue", value: `**${blue}**`, inline: true },
-          { name: "🏆 Winner", value: `**${winner}**`, inline: false },
-          { name: "📊 Competition Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false }
-        )
-        .setColor(winner === "RED" ? 0xFF0000 : winner === "BLUE" ? 0x0000FF : 0xFFFFFF)
-    ]
-  });
-}
-
-// =====================
-// REMATCH
-// =====================
-if (command === "rematch") {
+  // =====================
+  // REMATCH
+  // =====================
+if (interaction.commandName === "rematch") {
 
   if (!lastMatch) {
     return interaction.reply({
@@ -1114,21 +1291,32 @@ if (command === "rematch") {
 
   draftTeams.red = [...lastMatch.red];
   draftTeams.blue = [...lastMatch.blue];
+
   captains.red = draftTeams.red[0];
   captains.blue = draftTeams.blue[0];
+
   queue = [];
 
-  await moveTeams(guild, draftTeams.red, draftTeams.blue);
+  // move teams back
+  await moveTeams(
+    guild,
+    draftTeams.red,
+    draftTeams.blue
+  );
+
   matchStarted = true;
+
   await updateCompetitionEmbed();
 
-  return interaction.reply("🔁 Rematch started successfully");
+  return interaction.reply(
+    "🔁 Rematch started successfully"
+  );
 }
 
-// =====================
-// FINISH COMPETITION
-// =====================
-if (command === "finishcompetition") {
+  // =====================
+  // FINISH COMPETITION (NEW COMMAND - UPDATED TO MOVE PLAYERS)
+  // =====================
+  if (interaction.commandName === "finishcompetition") {
 
   if (!competitionActive && matchCount === 0) {
     return interaction.reply({
@@ -1170,8 +1358,11 @@ if (command === "finishcompetition") {
     .setTimestamp();
 
   await competitionMessage.edit({ embeds: [embed] });
+
+  // Move all players to main channel
   await moveAllPlayersToMain(guild);
 
+  // Reset competition
   competitionActive = false;
   competitionScores = { red: 0, blue: 0 };
   matchHistory = [];
@@ -1183,17 +1374,79 @@ if (command === "finishcompetition") {
   draftMode = false;
   pickedPlayers = new Set();
 
-  return interaction.reply({ embeds: [embed] });
+  return interaction.reply({
+    embeds: [embed]
+  });
 }
 
 // =====================
-// STATS
+// END COMPETITION EARLY
 // =====================
-if (command === "stats") {
-  return interaction.reply(
-    `Skill: ${playerData[member.id].skill}\nPosition: ${playerData[member.id].position}`
-  );
+if (interaction.commandName === "endcompetition") {
+
+  if (!competitionMessage) {
+    return interaction.reply({
+      content: "❌ No competition running",
+      flags: 64
+    });
+  }
+
+  if (matchCount === 0 && !hasRole(member, ADMIN_ROLES)) {
+    return interaction.reply({
+      content: "❌ You must play at least 1 match before ending competition",
+      flags: 64
+    });
+  }
+
+  let winner = "DRAW";
+
+  if (competitionScores.red > competitionScores.blue) {
+    winner = "🔴 RED TEAM";
+  } else if (competitionScores.blue > competitionScores.red) {
+    winner = "🔵 BLUE TEAM";
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle("🏁 COMPETITION ENDED EARLY")
+    .addFields(
+      { name: "🏆 Winner", value: winner, inline: false },
+      { name: "📊 Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false },
+      { name: "🎮 Matches Played", value: `${matchCount}`, inline: false }
+    )
+    .setColor(0xFFA500)
+    .setTimestamp();
+
+  await competitionMessage.edit({ embeds: [embed] });
+
+  // move everyone back + delete temp channels
+  await moveAllPlayersToMain(guild);
+
+  // RESET EVERYTHING
+  competitionActive = false;
+  competitionScores = { red: 0, blue: 0 };
+  matchHistory = [];
+  matchCount = 0;
+  draftTeams = { red: [], blue: [] };
+  captains = { red: null, blue: null };
+  queue = [];
+  matchStarted = false;
+  draftMode = false;
+  pickedPlayers = new Set();
+  lastMatch = null;
+
+  return interaction.reply({
+    content: "🏁 Competition ended early and all players restored"
+  });
 }
+
+  // =====================
+  // STATS (FIXED - ADDED CONDITIONAL CHECK)
+  // =====================
+  if (interaction.commandName === "stats") {
+    return interaction.reply(
+      `Skill: ${playerData[member.id].skill}\nPosition: ${playerData[member.id].position}`
+    );
+  }
 
 });
 
