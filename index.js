@@ -410,23 +410,370 @@ function getAllVoicePlayers(guild) {
 // =====================
 client.on('interactionCreate', async interaction => {
 
-  if (!interaction.isChatInputCommand()) return;
-
   const guild = interaction.guild;
-  const member = await guild.members.fetch(interaction.user.id);
+  if (!guild) return;
+
+  const member = await guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member) return;
+
+  // =====================
+  // BUTTON INTERACTIONS (HANDLE FIRST - BEFORE COMMAND CHECK)
+  // =====================
+  if (interaction.isButton()) {
+
+    if (!hasRole(member, ADMIN_ROLES)) {
+      return interaction.reply({
+        content: "❌ No permission",
+        flags: 64
+      });
+    }
+
+    const buttonId = interaction.customId;
+
+    // Execute the corresponding command based on button ID
+    if (buttonId === "startcompetition") {
+
+      queue = getAllVoicePlayers(guild);
+      queue.forEach(id => ensurePlayer(id));
+      draftTeams = { red: [], blue: [] };
+      captains = { red: null, blue: null };
+      draftMode = true;
+
+      competitionScores = { red: 0, blue: 0 };
+      matchHistory = [];
+      matchCount = 0;
+      pickedPlayers = new Set();
+
+      const embed = new EmbedBuilder()
+        .setTitle("🏆 COMPETITION STARTED")
+        .setDescription(
+          queue.map(id =>
+            `• <@${id}> — **${playerData[id]?.position || "MID"}**`
+          ).join("\n") || "No players"
+        )
+        .addFields(
+          { name: "🔴 Red Wins", value: "**0**", inline: true },
+          { name: "🔵 Blue Wins", value: "**0**", inline: true }
+        )
+        .setColor(0x00AEFF);
+
+      await interaction.reply({ embeds: [embed] });
+      competitionMessage = await interaction.fetchReply();
+      return;
+    }
+
+    if (buttonId === "autobalance") {
+
+      const players = getAllVoicePlayers(guild);
+      
+      if (draftMode && captains.red !== null && captains.blue !== null) {
+        return interaction.reply({
+          content: "❌ Captains already selected. Auto balance only works in free queue.",
+          flags: 64
+        });
+      }
+
+      if (players.length < 2) {
+        return interaction.reply({
+          content: "❌ Not enough players in voice channels",
+          flags: 64
+        });
+      }
+
+      let gks = [];
+      let defs = [];
+      let mids = [];
+      let atts = [];
+
+      for (const id of players) {
+        ensurePlayer(id);
+        const pos = playerData[id].position;
+
+        if (pos === "GK") gks.push(id);
+        else if (pos === "DEF") defs.push(id);
+        else if (pos === "ATT") atts.push(id);
+        else mids.push(id);
+      }
+
+      const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
+
+      gks = shuffle(gks);
+      defs = shuffle(defs);
+      mids = shuffle(mids);
+      atts = shuffle(atts);
+
+      const teamRed = [];
+      const teamBlue = [];
+
+      if (gks.length >= 2) {
+        teamRed.push(gks[0]);
+        teamBlue.push(gks[1]);
+      } else if (gks.length === 1) {
+        if (Math.random() > 0.5) {
+          teamRed.push(gks[0]);
+        } else {
+          teamBlue.push(gks[0]);
+        }
+      }
+
+      const used = new Set([...teamRed, ...teamBlue]);
+      const fieldPlayers = players.filter(p => !used.has(p));
+
+      for (const id of fieldPlayers) {
+        if (teamRed.length <= teamBlue.length) {
+          teamRed.push(id);
+        } else {
+          teamBlue.push(id);
+        }
+      }
+
+      draftTeams.red = teamRed;
+      draftTeams.blue = teamBlue;
+      queue = [];
+      captains.red = teamRed[0] || null;
+      captains.blue = teamBlue[0] || null;
+
+      for (const id of teamRed) {
+        const m = await guild.members.fetch(id).catch(() => null);
+        if (m?.voice?.channel) {
+          await m.voice.setChannel(RED_VC_ID);
+        }
+      }
+
+      for (const id of teamBlue) {
+        const m = await guild.members.fetch(id).catch(() => null);
+        if (m?.voice?.channel) {
+          await m.voice.setChannel(BLUE_VC_ID);
+        }
+      }
+
+      await updateCompetitionEmbed();
+
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("🤖 POSITION-BASED AUTO BALANCE")
+            .addFields(
+              {
+                name: "🔴 Red Team",
+                value: teamRed.map(id => `<@${id}> (${playerData[id]?.position})`).join("\n") || "None"
+              },
+              {
+                name: "🔵 Blue Team",
+                value: teamBlue.map(id => `<@${id}> (${playerData[id]?.position})`).join("\n") || "None"
+              }
+            )
+            .setColor(0x00AEFF)
+        ]
+      });
+    }
+
+    if (buttonId === "startmatch") {
+
+      const totalPlayers = draftTeams.red.length + draftTeams.blue.length;
+
+      if (totalPlayers < 2) {
+        return interaction.reply({
+          content: "❌ Not enough players to start a match (min 2 required)",
+          flags: 64
+        });
+      }
+
+      if (!captains.red || !captains.blue) {
+        const allPlayers = [...queue, ...draftTeams.red, ...draftTeams.blue];
+        const uniquePlayers = [...new Set(allPlayers)];
+
+        if (uniquePlayers.length < 2) {
+          return interaction.reply({
+            content: "❌ Not enough players to auto-balance",
+            flags: 64
+          });
+        }
+
+        const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
+        const shuffled = shuffle(uniquePlayers);
+        const mid = Math.ceil(shuffled.length / 2);
+
+        draftTeams.red = shuffled.slice(0, mid);
+        draftTeams.blue = shuffled.slice(mid);
+        captains.red = draftTeams.red[0];
+        captains.blue = draftTeams.blue[0];
+      }
+
+      if (draftTeams.red.length < 1 || draftTeams.blue.length < 1) {
+        return interaction.reply({
+          content: "❌ Teams are not properly formed",
+          flags: 64
+        });
+      }
+
+      lastMatch = {
+        red: [...draftTeams.red],
+        blue: [...draftTeams.blue]
+      };
+
+      matchStarted = true;
+      await moveTeams(guild, draftTeams.red, draftTeams.blue);
+      draftMode = false;
+
+      return interaction.reply("⚽ Match started successfully");
+    }
+
+    if (buttonId === "rematch") {
+
+      if (!lastMatch) {
+        return interaction.reply({
+          content: "❌ No previous match found",
+          flags: 64
+        });
+      }
+
+      draftTeams.red = [...lastMatch.red];
+      draftTeams.blue = [...lastMatch.blue];
+      captains.red = draftTeams.red[0];
+      captains.blue = draftTeams.blue[0];
+      queue = [];
+
+      await moveTeams(guild, draftTeams.red, draftTeams.blue);
+      matchStarted = true;
+      await updateCompetitionEmbed();
+
+      return interaction.reply("🔁 Rematch started successfully");
+    }
+
+    if (buttonId === "finishcompetition") {
+
+      if (!competitionActive && matchCount === 0) {
+        return interaction.reply({
+          content: "❌ No competition in progress",
+          flags: 64
+        });
+      }
+
+      if (matchCount < 3) {
+        return interaction.reply({
+          content: `❌ Minimum 3 matches required to finish competition (${matchCount}/3)`,
+          flags: 64
+        });
+      }
+
+      let competitionWinner = "DRAW";
+      let winnerColor = 0xFFFFFF;
+
+      if (competitionScores.red > competitionScores.blue) {
+        competitionWinner = "🔴 RED TEAM";
+        winnerColor = 0xFF0000;
+      } else if (competitionScores.blue > competitionScores.red) {
+        competitionWinner = "🔵 BLUE TEAM";
+        winnerColor = 0x0000FF;
+      }
+
+      const matchHistoryText = matchHistory.length > 0
+        ? matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | ${m.winner}`).join("\n")
+        : "No matches";
+
+      const embed = new EmbedBuilder()
+        .setTitle("🏆 COMPETITION FINISHED")
+        .addFields(
+          { name: "🏅 CHAMPION", value: `**${competitionWinner}**`, inline: false },
+          { name: "📊 Final Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false },
+          { name: "📋 Match Summary", value: matchHistoryText, inline: false }
+        )
+        .setColor(winnerColor)
+        .setTimestamp();
+
+      await competitionMessage.edit({ embeds: [embed] });
+      await moveAllPlayersToMain(guild);
+
+      competitionActive = false;
+      competitionScores = { red: 0, blue: 0 };
+      matchHistory = [];
+      matchCount = 0;
+      draftTeams = { red: [], blue: [] };
+      captains = { red: null, blue: null };
+      queue = [];
+      matchStarted = false;
+      draftMode = false;
+      pickedPlayers = new Set();
+
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (buttonId === "endcompetition") {
+
+      if (!competitionMessage) {
+        return interaction.reply({
+          content: "❌ No competition running",
+          flags: 64
+        });
+      }
+
+      if (matchCount === 0 && !hasRole(member, ADMIN_ROLES)) {
+        return interaction.reply({
+          content: "❌ You must play at least 1 match before ending competition",
+          flags: 64
+        });
+      }
+
+      let winner = "DRAW";
+
+      if (competitionScores.red > competitionScores.blue) {
+        winner = "🔴 RED TEAM";
+      } else if (competitionScores.blue > competitionScores.red) {
+        winner = "🔵 BLUE TEAM";
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle("🏁 COMPETITION ENDED EARLY")
+        .addFields(
+          { name: "🏆 Winner", value: winner, inline: false },
+          { name: "📊 Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false },
+          { name: "🎮 Matches Played", value: `${matchCount}`, inline: false }
+        )
+        .setColor(0xFFA500)
+        .setTimestamp();
+
+      await competitionMessage.edit({ embeds: [embed] });
+      await moveAllPlayersToMain(guild);
+
+      competitionActive = false;
+      competitionScores = { red: 0, blue: 0 };
+      matchHistory = [];
+      matchCount = 0;
+      draftTeams = { red: [], blue: [] };
+      captains = { red: null, blue: null };
+      queue = [];
+      matchStarted = false;
+      draftMode = false;
+      pickedPlayers = new Set();
+      lastMatch = null;
+
+      return interaction.reply({
+        content: "🏁 Competition ended early and all players restored"
+      });
+    }
+
+    return;
+  }
+
+  // =====================
+  // SLASH COMMANDS (HANDLE AFTER BUTTONS)
+  // =====================
+  if (!interaction.isChatInputCommand()) return;
 
   if (!canUse(member, interaction.commandName)) {
     return interaction.reply({ content: "No permission", flags: 64 });
   }
 
+  const command = interaction.commandName;
+
 // =====================
-// AUTOBALANCE (FIXED - PROPER VALIDATION)
+// AUTOBALANCE
 // =====================
-if (interaction.commandName === "autobalance") {
+if (command === "autobalance") {
 
   const players = getAllVoicePlayers(guild);
   
-  // Check if captains were manually selected (using /captains command)
   if (draftMode && captains.red !== null && captains.blue !== null) {
     return interaction.reply({
       content: "❌ Captains already selected. Auto balance only works in free queue.",
@@ -441,9 +788,6 @@ if (interaction.commandName === "autobalance") {
     });
   }
 
-  // =====================
-  // SPLIT BY POSITION
-  // =====================
   let gks = [];
   let defs = [];
   let mids = [];
@@ -470,42 +814,20 @@ if (interaction.commandName === "autobalance") {
   const teamRed = [];
   const teamBlue = [];
 
-  // =====================
-// 1 GK PER TEAM (FIXED)
-// =====================
-
-// 2 or more GKs
-if (gks.length >= 2) {
-
-  teamRed.push(gks[0]);
-  teamBlue.push(gks[1]);
-
-}
-
-// ONLY 1 GK
-else if (gks.length === 1) {
-
-  if (Math.random() > 0.5) {
+  if (gks.length >= 2) {
     teamRed.push(gks[0]);
-  } else {
-    teamBlue.push(gks[0]);
+    teamBlue.push(gks[1]);
+  } else if (gks.length === 1) {
+    if (Math.random() > 0.5) {
+      teamRed.push(gks[0]);
+    } else {
+      teamBlue.push(gks[0]);
+    }
   }
 
-}
+  const used = new Set([...teamRed, ...teamBlue]);
+  const fieldPlayers = players.filter(p => !used.has(p));
 
-  // remove assigned players from pool
-const used = new Set([
-  ...teamRed,
-  ...teamBlue
-]);
-
-const fieldPlayers = players.filter(
-  p => !used.has(p)
-);
-
-  // =====================
-  // BALANCE FIELD PLAYERS
-  // =====================
   for (const id of fieldPlayers) {
     if (teamRed.length <= teamBlue.length) {
       teamRed.push(id);
@@ -514,36 +836,26 @@ const fieldPlayers = players.filter(
     }
   }
 
-  // =====================
-  // SAVE STATE
-  // =====================
   draftTeams.red = teamRed;
   draftTeams.blue = teamBlue;
-
   queue = [];
-
-  // captains optional (GK default)
   captains.red = teamRed[0] || null;
   captains.blue = teamBlue[0] || null;
 
-  // =====================
-  // MOVE TO VOICE CHANNELS
-  // =====================
   for (const id of teamRed) {
-    const member = await guild.members.fetch(id).catch(() => null);
-    if (member?.voice?.channel) {
-      await member.voice.setChannel(RED_VC_ID);
+    const m = await guild.members.fetch(id).catch(() => null);
+    if (m?.voice?.channel) {
+      await m.voice.setChannel(RED_VC_ID);
     }
   }
 
   for (const id of teamBlue) {
-    const member = await guild.members.fetch(id).catch(() => null);
-    if (member?.voice?.channel) {
-      await member.voice.setChannel(BLUE_VC_ID);
+    const m = await guild.members.fetch(id).catch(() => null);
+    if (m?.voice?.channel) {
+      await m.voice.setChannel(BLUE_VC_ID);
     }
   }
 
-  // Update competition embed with new teams
   await updateCompetitionEmbed();
 
   return interaction.reply({
@@ -566,9 +878,9 @@ const fieldPlayers = players.filter(
 }
 
 // =====================
-  // JOIN
-  // =====================
-if (interaction.commandName === "join") {
+// JOIN
+// =====================
+if (command === "join") {
 
   const pos = interaction.options.getString("position").toUpperCase();
 
@@ -577,7 +889,6 @@ if (interaction.commandName === "join") {
   }
 
   ensurePlayer(member.id);
-
   playerData[member.id].position = pos;
 
   if (!queue.includes(member.id)) {
@@ -589,20 +900,18 @@ if (interaction.commandName === "join") {
   return interaction.reply(`✅ Joined as ${pos}`);
 }
 
-  // =====================
-  // START COMPETITION (NEW FEATURE)
-  // =====================
-  if (interaction.commandName === "startcompetition") {
+// =====================
+// START COMPETITION
+// =====================
+if (command === "startcompetition") {
 
   queue = getAllVoicePlayers(guild);
-
   queue.forEach(id => ensurePlayer(id));
 
   draftTeams = { red: [], blue: [] };
   captains = { red: null, blue: null };
   draftMode = true;
 
-  // Reset competition data
   competitionScores = { red: 0, blue: 0 };
   matchHistory = [];
   matchCount = 0;
@@ -622,78 +931,70 @@ if (interaction.commandName === "join") {
     .setColor(0x00AEFF);
 
   await interaction.reply({ embeds: [embed] });
-
   competitionMessage = await interaction.fetchReply();
 
   return;
 }
 
-  // =====================
-  // CAPTAINS
-  // =====================
-  if (interaction.commandName === "captains") {
-
-    captains.red = interaction.options.getUser("red").id;
-    captains.blue = interaction.options.getUser("blue").id;
-
-    draftTeams.red = [captains.red];
-    draftTeams.blue = [captains.blue];
-
-    queue = queue.filter(p => p !== captains.red && p !== captains.blue);
-
-    currentTurn = "red";
-
-    await updateCompetitionEmbed();
-
-    return interaction.reply("Captains set");
-  }
-
-  // =====================
-  // PICK (REMOVES PLAYER FROM EMBED LIVE - FIXED TO PREVENT DUPLICATE PICKS)
-  // =====================
-  if (interaction.commandName === "pick") {
-
-    const player = interaction.options.getUser("player").id;
-
-    // =====================
-    // CHECK IF PLAYER ALREADY PICKED IN THIS COMPETITION
-    // =====================
-    if (pickedPlayers.has(player)) {
-      return interaction.reply({
-        content: `❌ <@${player}> has already been picked in this competition!`,
-        flags: 64
-      });
-    }
-
-    if (!queue.includes(player)) {
-      return interaction.reply("Not in queue");
-    }
-
-    if (member.id !== captains[currentTurn]) {
-      return interaction.reply("Not your turn");
-    }
-
-    draftTeams[currentTurn].push(player);
-    queue = queue.filter(p => p !== player);
-    pickedPlayers.add(player); // Add to picked set
-
-    currentTurn = currentTurn === "red" ? "blue" : "red";
-
-    await updateCompetitionEmbed();
-
-    return interaction.reply(`Picked <@${player}>`);
-  }
-
-  // =====================
-// START MATCH (FIXED + AUTO BALANCE FALLBACK)
 // =====================
-if (interaction.commandName === "startmatch") {
+// CAPTAINS
+// =====================
+if (command === "captains") {
 
-  // =====================
-  // ❌ PREVENT INVALID MATCH
-  // =====================
-  const totalPlayers =
-    draftTeams.red.length + draftTeams.blue.length;
+  captains.red = interaction.options.getUser("red").id;
+  captains.blue = interaction.options.getUser("blue").id;
+
+  draftTeams.red = [captains.red];
+  draftTeams.blue = [captains.blue];
+
+  queue = queue.filter(p => p !== captains.red && p !== captains.blue);
+
+  currentTurn = "red";
+
+  await updateCompetitionEmbed();
+
+  return interaction.reply("Captains set");
+}
+
+// =====================
+// PICK
+// =====================
+if (command === "pick") {
+
+  const player = interaction.options.getUser("player").id;
+
+  if (pickedPlayers.has(player)) {
+    return interaction.reply({
+      content: `❌ <@${player}> has already been picked in this competition!`,
+      flags: 64
+    });
+  }
+
+  if (!queue.includes(player)) {
+    return interaction.reply("Not in queue");
+  }
+
+  if (member.id !== captains[currentTurn]) {
+    return interaction.reply("Not your turn");
+  }
+
+  draftTeams[currentTurn].push(player);
+  queue = queue.filter(p => p !== player);
+  pickedPlayers.add(player);
+
+  currentTurn = currentTurn === "red" ? "blue" : "red";
+
+  await updateCompetitionEmbed();
+
+  return interaction.reply(`Picked <@${player}>`);
+}
+
+// =====================
+// START MATCH
+// =====================
+if (command === "startmatch") {
+
+  const totalPlayers = draftTeams.red.length + draftTeams.blue.length;
 
   if (totalPlayers < 2) {
     return interaction.reply({
@@ -702,16 +1003,9 @@ if (interaction.commandName === "startmatch") {
     });
   }
 
-  // =====================
-  // ⚠ AUTO BALANCE IF NO CAPTAINS
-  // =====================
   if (!captains.red || !captains.blue) {
 
-    const allPlayers = [...queue];
-
-    // include already joined draft players too
-    allPlayers.push(...draftTeams.red, ...draftTeams.blue);
-
+    const allPlayers = [...queue, ...draftTeams.red, ...draftTeams.blue];
     const uniquePlayers = [...new Set(allPlayers)];
 
     if (uniquePlayers.length < 2) {
@@ -722,21 +1016,15 @@ if (interaction.commandName === "startmatch") {
     }
 
     const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
-
     const shuffled = shuffle(uniquePlayers);
-
     const mid = Math.ceil(shuffled.length / 2);
 
     draftTeams.red = shuffled.slice(0, mid);
     draftTeams.blue = shuffled.slice(mid);
-
     captains.red = draftTeams.red[0];
     captains.blue = draftTeams.blue[0];
   }
 
-  // =====================
-  // FINAL VALIDATION
-  // =====================
   if (draftTeams.red.length < 1 || draftTeams.blue.length < 1) {
     return interaction.reply({
       content: "❌ Teams are not properly formed",
@@ -745,83 +1033,77 @@ if (interaction.commandName === "startmatch") {
   }
 
   lastMatch = {
-  red: [...draftTeams.red],
-  blue: [...draftTeams.blue]
-};
+    red: [...draftTeams.red],
+    blue: [...draftTeams.blue]
+  };
 
-matchStarted = true;
+  matchStarted = true;
+  await moveTeams(guild, draftTeams.red, draftTeams.blue);
+  draftMode = false;
 
-await moveTeams(guild, draftTeams.red, draftTeams.blue);
-
-draftMode = false;
-
-return interaction.reply("⚽ Match started successfully");
-
+  return interaction.reply("⚽ Match started successfully");
 }
 
-  // =====================
-  // FINALIZE (UPDATED - ADD TO MATCH HISTORY)
-  // =====================
-  if (interaction.commandName === "finalize") {
+// =====================
+// FINALIZE
+// =====================
+if (command === "finalize") {
 
-    if (!matchStarted) {
-      return interaction.reply({
-        content: "❌ No match in progress",
-        flags: 64
-      });
-    }
-
-    const red = interaction.options.getInteger("red");
-    const blue = interaction.options.getInteger("blue");
-
-    let winner = "DRAW";
-    if (red > blue) {
-      winner = "RED";
-      competitionScores.red += 1;
-    } else if (blue > red) {
-      winner = "BLUE";
-      competitionScores.blue += 1;
-    }
-
-    matchCount += 1;
-
-    // Add to match history
-    matchHistory.push({
-      matchNumber: matchCount,
-      redScore: red,
-      blueScore: blue,
-      winner: winner
-    });
-
-    matchStarted = false;
-
-    // Reset teams for next match
-    draftTeams = { red: [], blue: [] };
-    captains = { red: null, blue: null };
-    queue = [];
-
-    // Update competition embed
-    await updateCompetitionEmbed();
-
+  if (!matchStarted) {
     return interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("⚽ MATCH FINISHED")
-          .addFields(
-            { name: "🔴 Red", value: `**${red}**`, inline: true },
-            { name: "🔵 Blue", value: `**${blue}**`, inline: true },
-            { name: "🏆 Winner", value: `**${winner}**`, inline: false },
-            { name: "📊 Competition Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false }
-          )
-          .setColor(winner === "RED" ? 0xFF0000 : winner === "BLUE" ? 0x0000FF : 0xFFFFFF)
-      ]
+      content: "❌ No match in progress",
+      flags: 64
     });
   }
 
-  // =====================
-  // REMATCH (UPDATED)
-  // =====================
-  if (interaction.commandName === "rematch") {
+  const red = interaction.options.getInteger("red");
+  const blue = interaction.options.getInteger("blue");
+
+  let winner = "DRAW";
+  if (red > blue) {
+    winner = "RED";
+    competitionScores.red += 1;
+  } else if (blue > red) {
+    winner = "BLUE";
+    competitionScores.blue += 1;
+  }
+
+  matchCount += 1;
+
+  matchHistory.push({
+    matchNumber: matchCount,
+    redScore: red,
+    blueScore: blue,
+    winner: winner
+  });
+
+  matchStarted = false;
+
+  draftTeams = { red: [], blue: [] };
+  captains = { red: null, blue: null };
+  queue = [];
+
+  await updateCompetitionEmbed();
+
+  return interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("⚽ MATCH FINISHED")
+        .addFields(
+          { name: "🔴 Red", value: `**${red}**`, inline: true },
+          { name: "🔵 Blue", value: `**${blue}**`, inline: true },
+          { name: "🏆 Winner", value: `**${winner}**`, inline: false },
+          { name: "📊 Competition Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false }
+        )
+        .setColor(winner === "RED" ? 0xFF0000 : winner === "BLUE" ? 0x0000FF : 0xFFFFFF)
+    ]
+  });
+}
+
+// =====================
+// REMATCH
+// =====================
+if (command === "rematch") {
 
   if (!lastMatch) {
     return interaction.reply({
@@ -836,15 +1118,17 @@ return interaction.reply("⚽ Match started successfully");
   captains.blue = draftTeams.blue[0];
   queue = [];
 
+  await moveTeams(guild, draftTeams.red, draftTeams.blue);
+  matchStarted = true;
   await updateCompetitionEmbed();
 
-  return interaction.reply("🔁 Rematch ready - Teams restored");
+  return interaction.reply("🔁 Rematch started successfully");
 }
 
-  // =====================
-  // FINISH COMPETITION (NEW COMMAND - UPDATED TO MOVE PLAYERS)
-  // =====================
-  if (interaction.commandName === "finishcompetition") {
+// =====================
+// FINISH COMPETITION
+// =====================
+if (command === "finishcompetition") {
 
   if (!competitionActive && matchCount === 0) {
     return interaction.reply({
@@ -886,11 +1170,8 @@ return interaction.reply("⚽ Match started successfully");
     .setTimestamp();
 
   await competitionMessage.edit({ embeds: [embed] });
-
-  // Move all players to main channel
   await moveAllPlayersToMain(guild);
 
-  // Reset competition
   competitionActive = false;
   competitionScores = { red: 0, blue: 0 };
   matchHistory = [];
@@ -902,19 +1183,17 @@ return interaction.reply("⚽ Match started successfully");
   draftMode = false;
   pickedPlayers = new Set();
 
-  return interaction.reply({
-    embeds: [embed]
-  });
+  return interaction.reply({ embeds: [embed] });
 }
 
-  // =====================
-  // STATS (FIXED - ADDED CONDITIONAL CHECK)
-  // =====================
-  if (interaction.commandName === "stats") {
-    return interaction.reply(
-      `Skill: ${playerData[member.id].skill}\nPosition: ${playerData[member.id].position}`
-    );
-  }
+// =====================
+// STATS
+// =====================
+if (command === "stats") {
+  return interaction.reply(
+    `Skill: ${playerData[member.id].skill}\nPosition: ${playerData[member.id].position}`
+  );
+}
 
 });
 
