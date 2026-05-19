@@ -27,43 +27,51 @@ const client = new Client({
 });
 
 // =====================
-// CONFIG
+// SERVER CONFIGURATIONS
 // =====================
-const ADMIN_ROLES = ["Admin", "Moderator", "Owner"];
-const PLAYER_ROLES = ["FC26 Player", "Member"];
+const serverConfigs = {};
 
-const MAIN_VC_ID = "1499698725893705872";
-const TEAM_CATEGORY_ID = "1502236927141875782";
-const ADMIN_PANEL_CHANNEL_ID = "1499753429512487023";
-
-// =====================
-// DATA
-// =====================
-let tempChannels = {
-  red: null,
-  blue: null
-};
-
-let originalVoiceChannels = {};
-let queue = [];
-const playerData = {};
-
-let draftMode = false;
-let captains = { red: null, blue: null };
-let draftTeams = { red: [], blue: [] };
-let currentTurn = "red";
-let lastMatch = null;
-let matchStarted = false;
+function getServerConfig(guildId) {
+  if (!serverConfigs[guildId]) {
+    serverConfigs[guildId] = {
+      ADMIN_ROLES: ["Admin", "Moderator", "Owner"],
+      PLAYER_ROLES: ["FC26 Player", "Member"],
+      MAIN_VC_ID: null,
+      TEAM_CATEGORY_ID: null,
+      ADMIN_PANEL_CHANNEL_ID: null
+    };
+  }
+  return serverConfigs[guildId];
+}
 
 // =====================
-// COMPETITION STATE
+// PER-SERVER DATA
 // =====================
-let competitionActive = false;
-let competitionMessage = null;
-let competitionScores = { red: 0, blue: 0 };
-let matchHistory = [];
-let matchCount = 0;
-let pickedPlayers = new Set();
+const serverData = {};
+
+function getServerData(guildId) {
+  if (!serverData[guildId]) {
+    serverData[guildId] = {
+      tempChannels: { red: null, blue: null },
+      originalVoiceChannels: {},
+      queue: [],
+      playerData: {},
+      draftMode: false,
+      captains: { red: null, blue: null },
+      draftTeams: { red: [], blue: [] },
+      currentTurn: "red",
+      lastMatch: null,
+      matchStarted: false,
+      competitionActive: false,
+      competitionMessage: null,
+      competitionScores: { red: 0, blue: 0 },
+      matchHistory: [],
+      matchCount: 0,
+      pickedPlayers: new Set()
+    };
+  }
+  return serverData[guildId];
+}
 
 // =====================
 // ROLE CHECK
@@ -75,7 +83,8 @@ function hasRole(member, roles) {
 // =====================
 // COMMAND ACCESS CONTROL
 // =====================
-function canUse(member, cmd) {
+function canUse(member, cmd, guildId) {
+  const config = getServerConfig(guildId);
   const admin = [
     "autobalance",
     "captains",
@@ -93,8 +102,8 @@ function canUse(member, cmd) {
     "stats"
   ];
 
-  if (admin.includes(cmd)) return hasRole(member, ADMIN_ROLES);
-  if (player.includes(cmd)) return hasRole(member, PLAYER_ROLES);
+  if (admin.includes(cmd)) return hasRole(member, config.ADMIN_ROLES);
+  if (player.includes(cmd)) return hasRole(member, config.PLAYER_ROLES);
 
   return true;
 }
@@ -102,9 +111,10 @@ function canUse(member, cmd) {
 // =====================
 // PLAYER DATA
 // =====================
-function ensurePlayer(id) {
-  if (!playerData[id]) {
-    playerData[id] = {
+function ensurePlayer(guildId, id) {
+  const data = getServerData(guildId);
+  if (!data.playerData[id]) {
+    data.playerData[id] = {
       skill: 5,
       position: "MID"
     };
@@ -126,10 +136,6 @@ function getVoicePlayers(guild) {
   });
 
   return [...new Set(users)];
-}
-
-function getAllVoicePlayers(guild) {
-  return getVoicePlayers(guild);
 }
 
 // =====================
@@ -214,18 +220,19 @@ function buildFinalizeModal() {
 // =====================
 // BUILD COMPETITION EMBED
 // =====================
-function buildCompetitionEmbed() {
-  const matchHistoryText = matchHistory.length > 0
-    ? matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | Winner: ${m.winner}`).join("\n")
+function buildCompetitionEmbed(guildId) {
+  const data = getServerData(guildId);
+  const matchHistoryText = data.matchHistory.length > 0
+    ? data.matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | Winner: ${m.winner}`).join("\n")
     : "No matches yet";
 
   const embed = new EmbedBuilder()
     .setTitle("🏆 LIVE COMPETITION")
     .addFields(
-      { name: "🔴 Red Team Score", value: `**${competitionScores.red}** wins`, inline: true },
-      { name: "🔵 Blue Team Score", value: `**${competitionScores.blue}** wins`, inline: true },
+      { name: "🔴 Red Team Score", value: `**${data.competitionScores.red}** wins`, inline: true },
+      { name: "🔵 Blue Team Score", value: `**${data.competitionScores.blue}** wins`, inline: true },
       { name: "📊 Match History", value: matchHistoryText, inline: false },
-      { name: "📋 Current Match", value: matchStarted ? "Match in progress" : "Waiting to start", inline: false }
+      { name: "📋 Current Match", value: data.matchStarted ? "Match in progress" : "Waiting to start", inline: false }
     )
     .setColor(0x00AEFF)
     .setTimestamp();
@@ -236,9 +243,17 @@ function buildCompetitionEmbed() {
 // =====================
 // RESTORE PLAYERS + DELETE TEMP CHANNELS
 // =====================
-async function moveAllPlayersToMain(guild) {
+async function moveAllPlayersToMain(guild, guildId) {
+  const config = getServerConfig(guildId);
+  const data = getServerData(guildId);
+
+  if (!config.MAIN_VC_ID) {
+    console.error("MAIN_VC_ID not configured for this server");
+    return;
+  }
+
   try {
-    for (const playerId of Object.keys(originalVoiceChannels)) {
+    for (const playerId of Object.keys(data.originalVoiceChannels)) {
       const member = await guild.members
         .fetch(playerId)
         .catch(() => null);
@@ -247,7 +262,7 @@ async function moveAllPlayersToMain(guild) {
 
       if (!member.voice?.channel) continue;
 
-      const originalChannelId = originalVoiceChannels[playerId];
+      const originalChannelId = data.originalVoiceChannels[playerId];
       const originalChannel = guild.channels.cache.get(originalChannelId);
 
       if (originalChannel) {
@@ -255,7 +270,7 @@ async function moveAllPlayersToMain(guild) {
           .setChannel(originalChannel)
           .catch(console.error);
       } else {
-        const mainChannel = guild.channels.cache.get(MAIN_VC_ID);
+        const mainChannel = guild.channels.cache.get(config.MAIN_VC_ID);
 
         if (mainChannel) {
           await member.voice
@@ -266,23 +281,23 @@ async function moveAllPlayersToMain(guild) {
     }
 
     // DELETE TEMP CHANNELS
-    if (tempChannels.red) {
-      const redChannel = guild.channels.cache.get(tempChannels.red);
+    if (data.tempChannels.red) {
+      const redChannel = guild.channels.cache.get(data.tempChannels.red);
       if (redChannel) {
         await redChannel.delete().catch(() => null);
       }
     }
 
-    if (tempChannels.blue) {
-      const blueChannel = guild.channels.cache.get(tempChannels.blue);
+    if (data.tempChannels.blue) {
+      const blueChannel = guild.channels.cache.get(data.tempChannels.blue);
       if (blueChannel) {
         await blueChannel.delete().catch(() => null);
       }
     }
 
     // RESET STORAGE
-    tempChannels = { red: null, blue: null };
-    originalVoiceChannels = {};
+    data.tempChannels = { red: null, blue: null };
+    data.originalVoiceChannels = {};
 
   } catch (err) {
     console.error("Error restoring players:", err);
@@ -292,36 +307,38 @@ async function moveAllPlayersToMain(guild) {
 // =====================
 // UPDATE COMPETITION EMBED
 // =====================
-async function updateCompetitionEmbed() {
-  if (!competitionMessage) return;
+async function updateCompetitionEmbed(guildId) {
+  const data = getServerData(guildId);
+  
+  if (!data.competitionMessage) return;
 
-  const available = queue.length
-    ? queue.map(id =>
-        `• <@${id}> — **${playerData[id]?.position || "MID"}**`
+  const available = data.queue.length
+    ? data.queue.map(id =>
+        `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
       ).join("\n")
     : "No players left";
 
-  const red = draftTeams.red.length
-    ? draftTeams.red.map(id =>
-        `• <@${id}> — **${playerData[id]?.position || "MID"}**`
+  const red = data.draftTeams.red.length
+    ? data.draftTeams.red.map(id =>
+        `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
       ).join("\n")
     : "Empty";
 
-  const blue = draftTeams.blue.length
-    ? draftTeams.blue.map(id =>
-        `• <@${id}> — **${playerData[id]?.position || "MID"}**`
+  const blue = data.draftTeams.blue.length
+    ? data.draftTeams.blue.map(id =>
+        `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
       ).join("\n")
     : "Empty";
 
-  const matchHistoryText = matchHistory.length > 0
-    ? matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | Winner: ${m.winner}`).join("\n")
+  const matchHistoryText = data.matchHistory.length > 0
+    ? data.matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | Winner: ${m.winner}`).join("\n")
     : "No matches yet";
 
   const embed = new EmbedBuilder()
     .setTitle("🏆 LIVE COMPETITION")
     .addFields(
-      { name: "🔴 Red Wins", value: `**${competitionScores.red}**`, inline: true },
-      { name: "🔵 Blue Wins", value: `**${competitionScores.blue}**`, inline: true },
+      { name: "🔴 Red Wins", value: `**${data.competitionScores.red}**`, inline: true },
+      { name: "🔵 Blue Wins", value: `**${data.competitionScores.blue}**`, inline: true },
       { name: "📊 Match History", value: matchHistoryText, inline: false },
       { name: "📋 Available Players", value: available },
       { name: "🔴 Red Team", value: red, inline: true },
@@ -330,22 +347,30 @@ async function updateCompetitionEmbed() {
     .setColor(0x00AEFF)
     .setTimestamp();
 
-  await competitionMessage.edit({ embeds: [embed] });
+  await data.competitionMessage.edit({ embeds: [embed] });
 }
 
 // =====================
 // CREATE TEAM CHANNELS
 // =====================
-async function createTeamChannels(guild) {
-  if (tempChannels.red) {
-    const oldRed = guild.channels.cache.get(tempChannels.red);
+async function createTeamChannels(guild, guildId) {
+  const config = getServerConfig(guildId);
+  const data = getServerData(guildId);
+
+  if (!config.TEAM_CATEGORY_ID) {
+    console.error("TEAM_CATEGORY_ID not configured for this server");
+    return;
+  }
+
+  if (data.tempChannels.red) {
+    const oldRed = guild.channels.cache.get(data.tempChannels.red);
     if (oldRed) {
       await oldRed.delete().catch(() => null);
     }
   }
 
-  if (tempChannels.blue) {
-    const oldBlue = guild.channels.cache.get(tempChannels.blue);
+  if (data.tempChannels.blue) {
+    const oldBlue = guild.channels.cache.get(data.tempChannels.blue);
     if (oldBlue) {
       await oldBlue.delete().catch(() => null);
     }
@@ -381,27 +406,29 @@ async function createTeamChannels(guild) {
   const redChannel = await guild.channels.create({
     name: "🔴 Red Team",
     type: ChannelType.GuildVoice,
-    parent: TEAM_CATEGORY_ID,
+    parent: config.TEAM_CATEGORY_ID,
     permissionOverwrites: permissions
   });
 
   const blueChannel = await guild.channels.create({
     name: "🔵 Blue Team",
     type: ChannelType.GuildVoice,
-    parent: TEAM_CATEGORY_ID,
+    parent: config.TEAM_CATEGORY_ID,
     permissionOverwrites: permissions
   });
 
-  tempChannels.red = redChannel.id;
-  tempChannels.blue = blueChannel.id;
+  data.tempChannels.red = redChannel.id;
+  data.tempChannels.blue = blueChannel.id;
 }
 
 // =====================
 // MOVE TEAMS TO TEMP CHANNELS
 // =====================
-async function moveTeams(guild, redTeam, blueTeam) {
-  if (!tempChannels.red || !tempChannels.blue) {
-    await createTeamChannels(guild);
+async function moveTeams(guild, guildId, redTeam, blueTeam) {
+  const data = getServerData(guildId);
+
+  if (!data.tempChannels.red || !data.tempChannels.blue) {
+    await createTeamChannels(guild, guildId);
   }
 
   // MOVE RED TEAM
@@ -410,13 +437,13 @@ async function moveTeams(guild, redTeam, blueTeam) {
 
     if (!member?.voice?.channel) continue;
 
-    if (!originalVoiceChannels[id]) {
-      originalVoiceChannels[id] = member.voice.channel.id;
+    if (!data.originalVoiceChannels[id]) {
+      data.originalVoiceChannels[id] = member.voice.channel.id;
     }
 
-    if (member.voice.channel.id !== tempChannels.red) {
+    if (member.voice.channel.id !== data.tempChannels.red) {
       await member.voice
-        .setChannel(tempChannels.red)
+        .setChannel(data.tempChannels.red)
         .catch(console.error);
     }
   }
@@ -427,13 +454,13 @@ async function moveTeams(guild, redTeam, blueTeam) {
 
     if (!member?.voice?.channel) continue;
 
-    if (!originalVoiceChannels[id]) {
-      originalVoiceChannels[id] = member.voice.channel.id;
+    if (!data.originalVoiceChannels[id]) {
+      data.originalVoiceChannels[id] = member.voice.channel.id;
     }
 
-    if (member.voice.channel.id !== tempChannels.blue) {
+    if (member.voice.channel.id !== data.tempChannels.blue) {
       await member.voice
-        .setChannel(tempChannels.blue)
+        .setChannel(data.tempChannels.blue)
         .catch(console.error);
     }
   }
@@ -527,32 +554,52 @@ const commands = [
     .setDescription('Stats'),
 
   new SlashCommandBuilder()
+    .setName('setconfig')
+    .setDescription('Configure bot settings (Admin only)')
+    .addChannelOption(o =>
+      o.setName('main_vc')
+        .setDescription('Main voice channel')
+        .setRequired(true)
+    )
+    .addChannelOption(o =>
+      o.setName('team_category')
+        .setDescription('Team category for temp channels')
+        .setRequired(true)
+    )
+    .addChannelOption(o =>
+      o.setName('admin_panel')
+        .setDescription('Admin panel channel')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
     .setName('panel')
     .setDescription('Send admin control panel')
 
 ].map(c => c.toJSON());
 
 // =====================
-// REGISTER COMMANDS
+// REGISTER COMMANDS (GLOBALLY)
 // =====================
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 async function register() {
-  await rest.put(
-    Routes.applicationGuildCommands(
-      process.env.CLIENT_ID,
-      process.env.GUILD_ID
-    ),
-    { body: commands }
-  );
+  try {
+    await rest.put(
+      Routes.applicationCommands(process.env.CLIENT_ID),
+      { body: commands }
+    );
 
-  console.log("✅ Commands registered cleanly");
+    console.log("✅ Commands registered globally");
+  } catch (err) {
+    console.error("Failed to register commands:", err);
+  }
 }
 
 // =====================
-// READY EVENT (FIXED - using 'clientReady' for v14)
+// READY EVENT
 // =====================
-client.once("clientReady", () => {
+client.once("ready", () => {
   console.log(`✅ Bot online as ${client.user.tag}`);
 });
 
@@ -571,6 +618,7 @@ client.on('interactionCreate', async interaction => {
   // =====================
   if (interaction.isModalSubmit()) {
     if (interaction.customId === "finalize_modal") {
+      const data = getServerData(guild.id);
       const red = parseInt(interaction.fields.getTextInputValue("red_score"));
       const blue = parseInt(interaction.fields.getTextInputValue("blue_score"));
 
@@ -578,7 +626,7 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: "❌ Invalid scores", flags: 64 });
       }
 
-      if (!matchStarted) {
+      if (!data.matchStarted) {
         return interaction.reply({ content: "❌ No match in progress", flags: 64 });
       }
 
@@ -586,27 +634,27 @@ client.on('interactionCreate', async interaction => {
 
       if (red > blue) {
         winner = "RED";
-        competitionScores.red += 1;
+        data.competitionScores.red += 1;
       } else if (blue > red) {
         winner = "BLUE";
-        competitionScores.blue += 1;
+        data.competitionScores.blue += 1;
       }
 
-      matchCount += 1;
+      data.matchCount += 1;
 
-      matchHistory.push({
-        matchNumber: matchCount,
+      data.matchHistory.push({
+        matchNumber: data.matchCount,
         redScore: red,
         blueScore: blue,
         winner
       });
 
-      matchStarted = false;
-      draftTeams = { red: [], blue: [] };
-      captains = { red: null, blue: null };
-      queue = [];
+      data.matchStarted = false;
+      data.draftTeams = { red: [], blue: [] };
+      data.captains = { red: null, blue: null };
+      data.queue = [];
 
-      await updateCompetitionEmbed();
+      await updateCompetitionEmbed(guild.id);
 
       return interaction.reply({
         embeds: [
@@ -624,10 +672,12 @@ client.on('interactionCreate', async interaction => {
   }
 
   // =====================
-  // BUTTON HANDLER (EXECUTE COMMANDS)
+  // BUTTON HANDLER
   // =====================
   if (interaction.isButton()) {
-    if (!hasRole(member, ADMIN_ROLES)) {
+    const config = getServerConfig(guild.id);
+    
+    if (!hasRole(member, config.ADMIN_ROLES)) {
       return interaction.reply({
         content: "❌ No permission",
         flags: 64
@@ -640,7 +690,6 @@ client.on('interactionCreate', async interaction => {
       return interaction.showModal(buildFinalizeModal());
     }
 
-    // Map button IDs to command names
     const buttonCommands = {
       "btn_startcompetition": "startcompetition",
       "btn_autobalance": "autobalance",
@@ -652,9 +701,7 @@ client.on('interactionCreate', async interaction => {
 
     const command = buttonCommands[id];
     
-    // If it's a valid button command, treat it as if it was a slash command
     if (command) {
-      // Create a fake interaction object that mimics a slash command
       const fakeInteraction = {
         commandName: command,
         isChatInputCommand: () => true,
@@ -664,14 +711,14 @@ client.on('interactionCreate', async interaction => {
         options: {
           getUser: () => null,
           getString: () => null,
-          getInteger: () => null
+          getInteger: () => null,
+          getChannel: () => null
         },
         user: interaction.user,
         guild: interaction.guild,
         fetchReply: interaction.fetchReply.bind(interaction)
       };
 
-      // Execute the command logic
       return handleCommand(fakeInteraction, guild, member);
     }
   }
@@ -689,19 +736,54 @@ client.on('interactionCreate', async interaction => {
 // =====================
 async function handleCommand(interaction, guild, member) {
   const command = interaction.commandName;
+  const guildId = guild.id;
+  const config = getServerConfig(guildId);
+  const data = getServerData(guildId);
 
   // =====================
-  // PANEL COMMAND
+  // SETCONFIG COMMAND
   // =====================
-  if (command === "panel") {
-    if (!hasRole(member, ADMIN_ROLES)) {
+  if (command === "setconfig") {
+    if (!hasRole(member, config.ADMIN_ROLES)) {
       return interaction.reply({
         content: "❌ No permission",
         flags: 64
       });
     }
 
-    const channel = await client.channels.fetch(ADMIN_PANEL_CHANNEL_ID);
+    const mainVc = interaction.options.getChannel("main_vc");
+    const teamCategory = interaction.options.getChannel("team_category");
+    const adminPanel = interaction.options.getChannel("admin_panel");
+
+    config.MAIN_VC_ID = mainVc.id;
+    config.TEAM_CATEGORY_ID = teamCategory.id;
+    config.ADMIN_PANEL_CHANNEL_ID = adminPanel.id;
+
+    return interaction.reply({
+      content: `✅ Configuration saved:\n• Main VC: <#${mainVc.id}>\n• Team Category: <#${teamCategory.id}>\n• Admin Panel: <#${adminPanel.id}>`,
+      flags: 64
+    });
+  }
+
+  // =====================
+  // PANEL COMMAND
+  // =====================
+  if (command === "panel") {
+    if (!hasRole(member, config.ADMIN_ROLES)) {
+      return interaction.reply({
+        content: "❌ No permission",
+        flags: 64
+      });
+    }
+
+    if (!config.ADMIN_PANEL_CHANNEL_ID) {
+      return interaction.reply({
+        content: "❌ Admin panel not configured. Use /setconfig first",
+        flags: 64
+      });
+    }
+
+    const channel = await client.channels.fetch(config.ADMIN_PANEL_CHANNEL_ID);
 
     if (!channel) {
       return interaction.reply({
@@ -728,14 +810,14 @@ async function handleCommand(interaction, guild, member) {
       return interaction.reply({ content: "Invalid position", flags: 64 });
     }
 
-    ensurePlayer(member.id);
-    playerData[member.id].position = pos;
+    ensurePlayer(guildId, member.id);
+    data.playerData[member.id].position = pos;
 
-    if (!queue.includes(member.id)) {
-      queue.push(member.id);
+    if (!data.queue.includes(member.id)) {
+      data.queue.push(member.id);
     }
 
-    await updateCompetitionEmbed();
+    await updateCompetitionEmbed(guildId);
 
     return interaction.reply(`✅ Joined as ${pos}`);
   }
@@ -744,31 +826,31 @@ async function handleCommand(interaction, guild, member) {
   // START COMPETITION
   // =====================
   if (command === "startcompetition") {
-    if (!hasRole(member, ADMIN_ROLES)) {
+    if (!hasRole(member, config.ADMIN_ROLES)) {
       return interaction.reply({
         content: "❌ No permission",
         flags: 64
       });
     }
 
-    queue = getAllVoicePlayers(guild);
-    queue.forEach(id => ensurePlayer(id));
+    data.queue = getVoicePlayers(guild);
+    data.queue.forEach(id => ensurePlayer(guildId, id));
 
-    draftTeams = { red: [], blue: [] };
-    captains = { red: null, blue: null };
-    draftMode = true;
-    competitionActive = true;
+    data.draftTeams = { red: [], blue: [] };
+    data.captains = { red: null, blue: null };
+    data.draftMode = true;
+    data.competitionActive = true;
 
-    competitionScores = { red: 0, blue: 0 };
-    matchHistory = [];
-    matchCount = 0;
-    pickedPlayers = new Set();
+    data.competitionScores = { red: 0, blue: 0 };
+    data.matchHistory = [];
+    data.matchCount = 0;
+    data.pickedPlayers = new Set();
 
     const embed = new EmbedBuilder()
       .setTitle("🏆 COMPETITION STARTED")
       .setDescription(
-        queue.map(id =>
-          `• <@${id}> — **${playerData[id]?.position || "MID"}**`
+        data.queue.map(id =>
+          `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
         ).join("\n") || "No players"
       )
       .addFields(
@@ -778,31 +860,31 @@ async function handleCommand(interaction, guild, member) {
       .setColor(0x00AEFF);
 
     await interaction.reply({ embeds: [embed] });
-    competitionMessage = await interaction.fetchReply();
+    data.competitionMessage = await interaction.fetchReply();
   }
 
   // =====================
   // CAPTAINS
   // =====================
   if (command === "captains") {
-    if (!hasRole(member, ADMIN_ROLES)) {
+    if (!hasRole(member, config.ADMIN_ROLES)) {
       return interaction.reply({
         content: "❌ No permission",
         flags: 64
       });
     }
 
-    captains.red = interaction.options.getUser("red").id;
-    captains.blue = interaction.options.getUser("blue").id;
+    data.captains.red = interaction.options.getUser("red").id;
+    data.captains.blue = interaction.options.getUser("blue").id;
 
-    draftTeams.red = [captains.red];
-    draftTeams.blue = [captains.blue];
+    data.draftTeams.red = [data.captains.red];
+    data.draftTeams.blue = [data.captains.blue];
 
-    queue = queue.filter(p => p !== captains.red && p !== captains.blue);
+    data.queue = data.queue.filter(p => p !== data.captains.red && p !== data.captains.blue);
 
-    currentTurn = "red";
+    data.currentTurn = "red";
 
-    await updateCompetitionEmbed();
+    await updateCompetitionEmbed(guildId);
 
     return interaction.reply("✅ Captains set");
   }
@@ -811,16 +893,16 @@ async function handleCommand(interaction, guild, member) {
   // AUTOBALANCE
   // =====================
   if (command === "autobalance") {
-    if (!hasRole(member, ADMIN_ROLES)) {
+    if (!hasRole(member, config.ADMIN_ROLES)) {
       return interaction.reply({
         content: "❌ No permission",
         flags: 64
       });
     }
 
-    const players = getAllVoicePlayers(guild);
+    const players = getVoicePlayers(guild);
 
-    if (draftTeams.red.length > 0 && draftTeams.blue.length > 0) {
+    if (data.draftTeams.red.length > 0 && data.draftTeams.blue.length > 0) {
       return interaction.reply({
         content: "❌ Teams already formed. Cannot auto-balance after draft has started.",
         flags: 64
@@ -840,8 +922,8 @@ async function handleCommand(interaction, guild, member) {
     let atts = [];
 
     for (const id of players) {
-      ensurePlayer(id);
-      const pos = playerData[id].position;
+      ensurePlayer(guildId, id);
+      const pos = data.playerData[id].position;
 
       if (pos === "GK") gks.push(id);
       else if (pos === "DEF") defs.push(id);
@@ -859,7 +941,6 @@ async function handleCommand(interaction, guild, member) {
     const teamRed = [];
     const teamBlue = [];
 
-    // 1 GK PER TEAM
     if (gks.length >= 2) {
       teamRed.push(gks[0]);
       teamBlue.push(gks[1]);
@@ -874,7 +955,6 @@ async function handleCommand(interaction, guild, member) {
     const used = new Set([...teamRed, ...teamBlue]);
     const fieldPlayers = players.filter(p => !used.has(p));
 
-    // BALANCE FIELD PLAYERS
     for (const id of fieldPlayers) {
       if (teamRed.length <= teamBlue.length) {
         teamRed.push(id);
@@ -883,14 +963,14 @@ async function handleCommand(interaction, guild, member) {
       }
     }
 
-    draftTeams.red = teamRed;
-    draftTeams.blue = teamBlue;
-    queue = [];
-    captains.red = teamRed[0] || null;
-    captains.blue = teamBlue[0] || null;
+    data.draftTeams.red = teamRed;
+    data.draftTeams.blue = teamBlue;
+    data.queue = [];
+    data.captains.red = teamRed[0] || null;
+    data.captains.blue = teamBlue[0] || null;
 
-    await moveTeams(guild, teamRed, teamBlue);
-    await updateCompetitionEmbed();
+    await moveTeams(guild, guildId, teamRed, teamBlue);
+    await updateCompetitionEmbed(guildId);
 
     return interaction.reply({
       embeds: [
@@ -899,11 +979,11 @@ async function handleCommand(interaction, guild, member) {
           .addFields(
             {
               name: "🔴 Red Team",
-              value: teamRed.map(id => `<@${id}> (${playerData[id]?.position})`).join("\n") || "None"
+              value: teamRed.map(id => `<@${id}> (${data.playerData[id]?.position})`).join("\n") || "None"
             },
             {
               name: "🔵 Blue Team",
-              value: teamBlue.map(id => `<@${id}> (${playerData[id]?.position})`).join("\n") || "None"
+              value: teamBlue.map(id => `<@${id}> (${data.playerData[id]?.position})`).join("\n") || "None"
             }
           )
           .setColor(0x00AEFF)
@@ -917,34 +997,34 @@ async function handleCommand(interaction, guild, member) {
   if (command === "pick") {
     const player = interaction.options.getUser("player").id;
 
-    if (pickedPlayers.has(player)) {
+    if (data.pickedPlayers.has(player)) {
       return interaction.reply({
         content: `❌ <@${player}> has already been picked in this competition!`,
         flags: 64
       });
     }
 
-    if (!queue.includes(player)) {
+    if (!data.queue.includes(player)) {
       return interaction.reply({
         content: "❌ Player not in queue",
         flags: 64
       });
     }
 
-    if (member.id !== captains[currentTurn]) {
+    if (member.id !== data.captains[data.currentTurn]) {
       return interaction.reply({
         content: "❌ Not your turn",
         flags: 64
       });
     }
 
-    draftTeams[currentTurn].push(player);
-    queue = queue.filter(p => p !== player);
-    pickedPlayers.add(player);
+    data.draftTeams[data.currentTurn].push(player);
+    data.queue = data.queue.filter(p => p !== player);
+    data.pickedPlayers.add(player);
 
-    currentTurn = currentTurn === "red" ? "blue" : "red";
+    data.currentTurn = data.currentTurn === "red" ? "blue" : "red";
 
-    await updateCompetitionEmbed();
+    await updateCompetitionEmbed(guildId);
 
     return interaction.reply(`✅ Picked <@${player}>`);
   }
@@ -953,14 +1033,14 @@ async function handleCommand(interaction, guild, member) {
   // START MATCH
   // =====================
   if (command === "startmatch") {
-    if (!hasRole(member, ADMIN_ROLES)) {
+    if (!hasRole(member, config.ADMIN_ROLES)) {
       return interaction.reply({
         content: "❌ No permission",
         flags: 64
       });
     }
 
-    const totalPlayers = draftTeams.red.length + draftTeams.blue.length;
+    const totalPlayers = data.draftTeams.red.length + data.draftTeams.blue.length;
 
     if (totalPlayers < 2) {
       return interaction.reply({
@@ -969,8 +1049,8 @@ async function handleCommand(interaction, guild, member) {
       });
     }
 
-    if (!captains.red || !captains.blue) {
-      const allPlayers = [...queue, ...draftTeams.red, ...draftTeams.blue];
+    if (!data.captains.red || !data.captains.blue) {
+      const allPlayers = [...data.queue, ...data.draftTeams.red, ...data.draftTeams.blue];
       const uniquePlayers = [...new Set(allPlayers)];
 
       if (uniquePlayers.length < 2) {
@@ -984,30 +1064,30 @@ async function handleCommand(interaction, guild, member) {
       const shuffled = shuffle(uniquePlayers);
       const mid = Math.ceil(shuffled.length / 2);
 
-      draftTeams.red = shuffled.slice(0, mid);
-      draftTeams.blue = shuffled.slice(mid);
+      data.draftTeams.red = shuffled.slice(0, mid);
+      data.draftTeams.blue = shuffled.slice(mid);
 
-      captains.red = draftTeams.red[0];
-      captains.blue = draftTeams.blue[0];
+      data.captains.red = data.draftTeams.red[0];
+      data.captains.blue = data.draftTeams.blue[0];
     }
 
-    if (draftTeams.red.length < 1 || draftTeams.blue.length < 1) {
+    if (data.draftTeams.red.length < 1 || data.draftTeams.blue.length < 1) {
       return interaction.reply({
         content: "❌ Teams are not properly formed",
         flags: 64
       });
     }
 
-    lastMatch = {
-      red: [...draftTeams.red],
-      blue: [...draftTeams.blue]
+    data.lastMatch = {
+      red: [...data.draftTeams.red],
+      blue: [...data.draftTeams.blue]
     };
 
-    matchStarted = true;
+    data.matchStarted = true;
 
-    await moveTeams(guild, draftTeams.red, draftTeams.blue);
+    await moveTeams(guild, guildId, data.draftTeams.red, data.draftTeams.blue);
 
-    draftMode = false;
+    data.draftMode = false;
 
     return interaction.reply("⚽ Match started successfully");
   }
@@ -1016,14 +1096,14 @@ async function handleCommand(interaction, guild, member) {
   // FINALIZE
   // =====================
   if (command === "finalize") {
-    if (!hasRole(member, ADMIN_ROLES)) {
+    if (!hasRole(member, config.ADMIN_ROLES)) {
       return interaction.reply({
         content: "❌ No permission",
         flags: 64
       });
     }
 
-    if (!matchStarted) {
+    if (!data.matchStarted) {
       return interaction.reply({
         content: "❌ No match in progress",
         flags: 64
@@ -1036,28 +1116,28 @@ async function handleCommand(interaction, guild, member) {
     let winner = "DRAW";
     if (red > blue) {
       winner = "RED";
-      competitionScores.red += 1;
+      data.competitionScores.red += 1;
     } else if (blue > red) {
       winner = "BLUE";
-      competitionScores.blue += 1;
+      data.competitionScores.blue += 1;
     }
 
-    matchCount += 1;
+    data.matchCount += 1;
 
-    matchHistory.push({
-      matchNumber: matchCount,
+    data.matchHistory.push({
+      matchNumber: data.matchCount,
       redScore: red,
       blueScore: blue,
       winner: winner
     });
 
-    matchStarted = false;
+    data.matchStarted = false;
 
-    draftTeams = { red: [], blue: [] };
-    captains = { red: null, blue: null };
-    queue = [];
+    data.draftTeams = { red: [], blue: [] };
+    data.captains = { red: null, blue: null };
+    data.queue = [];
 
-    await updateCompetitionEmbed();
+    await updateCompetitionEmbed(guildId);
 
     return interaction.reply({
       embeds: [
@@ -1067,7 +1147,7 @@ async function handleCommand(interaction, guild, member) {
             { name: "🔴 Red", value: `**${red}**`, inline: true },
             { name: "🔵 Blue", value: `**${blue}**`, inline: true },
             { name: "🏆 Winner", value: `**${winner}**`, inline: false },
-            { name: "📊 Competition Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false }
+            { name: "📊 Competition Score", value: `🔴 ${data.competitionScores.red} - 🔵 ${data.competitionScores.blue}`, inline: false }
           )
           .setColor(winner === "RED" ? 0xFF0000 : winner === "BLUE" ? 0x0000FF : 0xFFFFFF)
       ]
@@ -1078,33 +1158,33 @@ async function handleCommand(interaction, guild, member) {
   // REMATCH
   // =====================
   if (command === "rematch") {
-    if (!hasRole(member, ADMIN_ROLES)) {
+    if (!hasRole(member, config.ADMIN_ROLES)) {
       return interaction.reply({
         content: "❌ No permission",
         flags: 64
       });
     }
 
-    if (!lastMatch) {
+    if (!data.lastMatch) {
       return interaction.reply({
         content: "❌ No previous match found",
         flags: 64
       });
     }
 
-    draftTeams.red = [...lastMatch.red];
-    draftTeams.blue = [...lastMatch.blue];
+    data.draftTeams.red = [...data.lastMatch.red];
+    data.draftTeams.blue = [...data.lastMatch.blue];
 
-    captains.red = draftTeams.red[0];
-    captains.blue = draftTeams.blue[0];
+    data.captains.red = data.draftTeams.red[0];
+    data.captains.blue = data.draftTeams.blue[0];
 
-    queue = [];
+    data.queue = [];
 
-    await moveTeams(guild, draftTeams.red, draftTeams.blue);
+    await moveTeams(guild, guildId, data.draftTeams.red, data.draftTeams.blue);
 
-    matchStarted = true;
+    data.matchStarted = true;
 
-    await updateCompetitionEmbed();
+    await updateCompetitionEmbed(guildId);
 
     return interaction.reply("🔁 Rematch started successfully");
   }
@@ -1113,23 +1193,23 @@ async function handleCommand(interaction, guild, member) {
   // FINISH COMPETITION
   // =====================
   if (command === "finishcompetition") {
-    if (!hasRole(member, ADMIN_ROLES)) {
+    if (!hasRole(member, config.ADMIN_ROLES)) {
       return interaction.reply({
         content: "❌ No permission",
         flags: 64
       });
     }
 
-    if (!competitionActive && matchCount === 0) {
+    if (!data.competitionActive && data.matchCount === 0) {
       return interaction.reply({
         content: "❌ No competition in progress",
         flags: 64
       });
     }
 
-    if (matchCount < 3) {
+    if (data.matchCount < 3) {
       return interaction.reply({
-        content: `❌ Minimum 3 matches required to finish competition (${matchCount}/3)`,
+        content: `❌ Minimum 3 matches required to finish competition (${data.matchCount}/3)`,
         flags: 64
       });
     }
@@ -1137,42 +1217,42 @@ async function handleCommand(interaction, guild, member) {
     let competitionWinner = "DRAW";
     let winnerColor = 0xFFFFFF;
 
-    if (competitionScores.red > competitionScores.blue) {
+    if (data.competitionScores.red > data.competitionScores.blue) {
       competitionWinner = "🔴 RED TEAM";
       winnerColor = 0xFF0000;
-    } else if (competitionScores.blue > competitionScores.red) {
+    } else if (data.competitionScores.blue > data.competitionScores.red) {
       competitionWinner = "🔵 BLUE TEAM";
       winnerColor = 0x0000FF;
     }
 
-    const matchHistoryText = matchHistory.length > 0
-      ? matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | ${m.winner}`).join("\n")
+    const matchHistoryText = data.matchHistory.length > 0
+      ? data.matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | ${m.winner}`).join("\n")
       : "No matches";
 
     const embed = new EmbedBuilder()
       .setTitle("🏆 COMPETITION FINISHED")
       .addFields(
         { name: "🏅 CHAMPION", value: `**${competitionWinner}**`, inline: false },
-        { name: "📊 Final Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false },
+        { name: "📊 Final Score", value: `🔴 ${data.competitionScores.red} - 🔵 ${data.competitionScores.blue}`, inline: false },
         { name: "📋 Match Summary", value: matchHistoryText, inline: false }
       )
       .setColor(winnerColor)
       .setTimestamp();
 
-    await competitionMessage.edit({ embeds: [embed] });
+    await data.competitionMessage.edit({ embeds: [embed] });
 
-    await moveAllPlayersToMain(guild);
+    await moveAllPlayersToMain(guild, guildId);
 
-    competitionActive = false;
-    competitionScores = { red: 0, blue: 0 };
-    matchHistory = [];
-    matchCount = 0;
-    draftTeams = { red: [], blue: [] };
-    captains = { red: null, blue: null };
-    queue = [];
-    matchStarted = false;
-    draftMode = false;
-    pickedPlayers = new Set();
+    data.competitionActive = false;
+    data.competitionScores = { red: 0, blue: 0 };
+    data.matchHistory = [];
+    data.matchCount = 0;
+    data.draftTeams = { red: [], blue: [] };
+    data.captains = { red: null, blue: null };
+    data.queue = [];
+    data.matchStarted = false;
+    data.draftMode = false;
+    data.pickedPlayers = new Set();
 
     return interaction.reply({
       embeds: [embed]
@@ -1183,14 +1263,14 @@ async function handleCommand(interaction, guild, member) {
   // END COMPETITION EARLY
   // =====================
   if (command === "endcompetition") {
-    if (!hasRole(member, ADMIN_ROLES)) {
+    if (!hasRole(member, config.ADMIN_ROLES)) {
       return interaction.reply({
         content: "❌ No permission",
         flags: 64
       });
     }
 
-    if (!competitionMessage) {
+    if (!data.competitionMessage) {
       return interaction.reply({
         content: "❌ No competition running",
         flags: 64
@@ -1199,9 +1279,9 @@ async function handleCommand(interaction, guild, member) {
 
     let winner = "DRAW";
 
-    if (competitionScores.red > competitionScores.blue) {
+    if (data.competitionScores.red > data.competitionScores.blue) {
       winner = "🔴 RED TEAM";
-    } else if (competitionScores.blue > competitionScores.red) {
+    } else if (data.competitionScores.blue > data.competitionScores.red) {
       winner = "🔵 BLUE TEAM";
     }
 
@@ -1209,27 +1289,27 @@ async function handleCommand(interaction, guild, member) {
       .setTitle("🏁 COMPETITION ENDED EARLY")
       .addFields(
         { name: "🏆 Winner", value: winner, inline: false },
-        { name: "📊 Score", value: `🔴 ${competitionScores.red} - 🔵 ${competitionScores.blue}`, inline: false },
-        { name: "🎮 Matches Played", value: `${matchCount}`, inline: false }
+        { name: "📊 Score", value: `🔴 ${data.competitionScores.red} - 🔵 ${data.competitionScores.blue}`, inline: false },
+        { name: "🎮 Matches Played", value: `${data.matchCount}`, inline: false }
       )
       .setColor(0xFFA500)
       .setTimestamp();
 
-    await competitionMessage.edit({ embeds: [embed] });
+    await data.competitionMessage.edit({ embeds: [embed] });
 
-    await moveAllPlayersToMain(guild);
+    await moveAllPlayersToMain(guild, guildId);
 
-    competitionActive = false;
-    competitionScores = { red: 0, blue: 0 };
-    matchHistory = [];
-    matchCount = 0;
-    draftTeams = { red: [], blue: [] };
-    captains = { red: null, blue: null };
-    queue = [];
-    matchStarted = false;
-    draftMode = false;
-    pickedPlayers = new Set();
-    lastMatch = null;
+    data.competitionActive = false;
+    data.competitionScores = { red: 0, blue: 0 };
+    data.matchHistory = [];
+    data.matchCount = 0;
+    data.draftTeams = { red: [], blue: [] };
+    data.captains = { red: null, blue: null };
+    data.queue = [];
+    data.matchStarted = false;
+    data.draftMode = false;
+    data.pickedPlayers = new Set();
+    data.lastMatch = null;
 
     return interaction.reply({
       content: "🏁 Competition ended early and all players restored"
@@ -1240,9 +1320,9 @@ async function handleCommand(interaction, guild, member) {
   // STATS
   // =====================
   if (command === "stats") {
-    ensurePlayer(member.id);
+    ensurePlayer(guildId, member.id);
     return interaction.reply(
-      `Skill: ${playerData[member.id].skill}\nPosition: ${playerData[member.id].position}`
+      `Skill: ${data.playerData[member.id].skill}\nPosition: ${data.playerData[member.id].position}`
     );
   }
 }
