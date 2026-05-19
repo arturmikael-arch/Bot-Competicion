@@ -14,7 +14,35 @@ const {
   ButtonStyle
 } = require('discord.js');
 
+const fs = require('fs');
+const path = require('path');
+
 require('dotenv').config();
+
+// =====================
+// CONFIG PERSISTENCE
+// =====================
+const CONFIG_FILE = path.join(__dirname, 'serverConfigs.json');
+
+function loadConfigs() {
+  if (fs.existsSync(CONFIG_FILE)) {
+    try {
+      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    } catch (err) {
+      console.error("Failed to load configs:", err);
+      return {};
+    }
+  }
+  return {};
+}
+
+function saveConfigs(configs) {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(configs, null, 2));
+  } catch (err) {
+    console.error("Failed to save configs:", err);
+  }
+}
 
 // =====================
 // CLIENT
@@ -29,7 +57,7 @@ const client = new Client({
 // =====================
 // SERVER CONFIGURATIONS
 // =====================
-const serverConfigs = {};
+const serverConfigs = loadConfigs();
 
 function getServerConfig(guildId) {
   if (!serverConfigs[guildId]) {
@@ -38,8 +66,10 @@ function getServerConfig(guildId) {
       PLAYER_ROLES: ["FC26 Player", "Member"],
       MAIN_VC_ID: null,
       TEAM_CATEGORY_ID: null,
-      ADMIN_PANEL_CHANNEL_ID: null
+      ADMIN_PANEL_CHANNEL_ID: null,
+      COMPETITION_CHANNEL_ID: null
     };
+    saveConfigs(serverConfigs);
   }
   return serverConfigs[guildId];
 }
@@ -570,6 +600,11 @@ const commands = [
       o.setName('admin_panel')
         .setDescription('Admin panel channel')
         .setRequired(true)
+    )
+    .addChannelOption(o =>
+      o.setName('competition_channel')
+        .setDescription('Channel where competition embed will be posted')
+        .setRequired(true)
     ),
 
   new SlashCommandBuilder()
@@ -754,13 +789,17 @@ async function handleCommand(interaction, guild, member) {
     const mainVc = interaction.options.getChannel("main_vc");
     const teamCategory = interaction.options.getChannel("team_category");
     const adminPanel = interaction.options.getChannel("admin_panel");
+    const competitionChannel = interaction.options.getChannel("competition_channel");
 
     config.MAIN_VC_ID = mainVc.id;
     config.TEAM_CATEGORY_ID = teamCategory.id;
     config.ADMIN_PANEL_CHANNEL_ID = adminPanel.id;
+    config.COMPETITION_CHANNEL_ID = competitionChannel.id;
+
+    saveConfigs(serverConfigs);
 
     return interaction.reply({
-      content: `✅ Configuration saved:\n• Main VC: <#${mainVc.id}>\n• Team Category: <#${teamCategory.id}>\n• Admin Panel: <#${adminPanel.id}>`,
+      content: `✅ Configuration saved:\n• Main VC: <#${mainVc.id}>\n• Team Category: <#${teamCategory.id}>\n• Admin Panel: <#${adminPanel.id}>\n• Competition Channel: <#${competitionChannel.id}>`,
       flags: 64
     });
   }
@@ -833,6 +872,13 @@ async function handleCommand(interaction, guild, member) {
       });
     }
 
+    if (!config.COMPETITION_CHANNEL_ID) {
+      return interaction.reply({
+        content: "❌ Competition channel not configured. Use /setconfig first",
+        flags: 64
+      });
+    }
+
     data.queue = getVoicePlayers(guild);
     data.queue.forEach(id => ensurePlayer(guildId, id));
 
@@ -859,8 +905,22 @@ async function handleCommand(interaction, guild, member) {
       )
       .setColor(0x00AEFF);
 
-    await interaction.reply({ embeds: [embed] });
-    data.competitionMessage = await interaction.fetchReply();
+    try {
+      const competitionChannel = await client.channels.fetch(config.COMPETITION_CHANNEL_ID);
+      const sentMessage = await competitionChannel.send({ embeds: [embed] });
+      data.competitionMessage = sentMessage;
+
+      return interaction.reply({
+        content: `✅ Competition started! Embed posted in <#${config.COMPETITION_CHANNEL_ID}>`,
+        flags: 64
+      });
+    } catch (err) {
+      console.error("Error posting competition message:", err);
+      return interaction.reply({
+        content: "❌ Failed to post competition message to the configured channel",
+        flags: 64
+      });
+    }
   }
 
   // =====================
