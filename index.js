@@ -97,7 +97,8 @@ function getServerData(guildId) {
       competitionScores: { red: 0, blue: 0 },
       matchHistory: [],
       matchCount: 0,
-      pickedPlayers: new Set()
+      pickedPlayers: new Set(),
+      captainPanelMessage: null
     };
   }
   return serverData[guildId];
@@ -217,6 +218,157 @@ function buildAdminPanel() {
   );
 
   return { embeds: [embed], components: [row1, row2] };
+}
+
+// =====================
+// BUILD PLAYER PANEL
+// =====================
+function buildPlayerPanel() {
+  const embed = new EmbedBuilder()
+    .setTitle("🎮 PLAYER COMMANDS")
+    .setDescription("Use buttons to execute player commands")
+    .setColor(0x00FF00);
+
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("btn_join_position")
+      .setLabel("Join Queue")
+      .setStyle(ButtonStyle.Success),
+
+    new ButtonBuilder()
+      .setCustomId("btn_set_skill")
+      .setLabel("Set Skill Level")
+      .setStyle(ButtonStyle.Primary),
+
+    new ButtonBuilder()
+      .setCustomId("btn_view_stats")
+      .setLabel("View Stats")
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return { embeds: [embed], components: [row1] };
+}
+
+// =====================
+// BUILD CAPTAIN DRAFT PANEL
+// =====================
+function buildCaptainDraftPanel(guildId) {
+  const data = getServerData(guildId);
+
+  const currentTurnEmoji = data.currentTurn === "red" ? "🔴" : "🔵";
+  const currentCaptainId = data.captains[data.currentTurn];
+
+  const embed = new EmbedBuilder()
+    .setTitle("🎯 CAPTAIN DRAFT PANEL")
+    .setDescription(`${currentTurnEmoji} **${data.currentTurn.toUpperCase()} TEAM'S TURN**`)
+    .setColor(data.currentTurn === "red" ? 0xFF0000 : 0x0000FF)
+    .addFields(
+      {
+        name: "🔴 Red Team",
+        value: data.draftTeams.red.length > 0
+          ? data.draftTeams.red.map(id => `<@${id}>`).join("\n")
+          : "No players",
+        inline: true
+      },
+      {
+        name: "🔵 Blue Team",
+        value: data.draftTeams.blue.length > 0
+          ? data.draftTeams.blue.map(id => `<@${id}>`).join("\n")
+          : "No players",
+        inline: true
+      },
+      {
+        name: "📋 Available Players",
+        value: data.queue.length > 0
+          ? data.queue.map(id => `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`).join("\n")
+          : "All players picked!",
+        inline: false
+      },
+      {
+        name: `🎤 ${data.currentTurn === "red" ? "🔴 Red" : "🔵 Blue"} Captain`,
+        value: currentCaptainId ? `<@${currentCaptainId}>` : "Not set",
+        inline: false
+      }
+    )
+    .setTimestamp();
+
+  // Create button rows for available players (max 5 per row, max 25 total)
+  const rows = [];
+  const availablePlayers = data.queue.slice(0, 25);
+
+  for (let i = 0; i < availablePlayers.length; i += 5) {
+    const rowPlayers = availablePlayers.slice(i, i + 5);
+    const row = new ActionRowBuilder().addComponents(
+      ...rowPlayers.map(playerId => {
+        const playerData = data.playerData[playerId];
+        return new ButtonBuilder()
+          .setCustomId(`pick_player_${playerId}`)
+          .setLabel(`${playerData?.position || "MID"}`)
+          .setStyle(ButtonStyle.Primary);
+      })
+    );
+    rows.push(row);
+  }
+
+  // Add a row for admin controls if no more players
+  if (data.queue.length === 0) {
+    const controlRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("btn_start_match_draft")
+        .setLabel("Start Match")
+        .setStyle(ButtonStyle.Success),
+
+      new ButtonBuilder()
+        .setCustomId("btn_clear_draft")
+        .setLabel("Clear Teams")
+        .setStyle(ButtonStyle.Danger)
+    );
+    rows.push(controlRow);
+  }
+
+  return { embeds: [embed], components: rows };
+}
+
+// =====================
+// BUILD JOIN MODAL
+// =====================
+function buildJoinModal() {
+  const modal = new ModalBuilder()
+    .setCustomId("join_modal")
+    .setTitle("Join Queue");
+
+  const positionInput = new TextInputBuilder()
+    .setCustomId("position_input")
+    .setLabel("Position (GK / DEF / MID / ATT)")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setPlaceholder("e.g., MID");
+
+  const row = new ActionRowBuilder().addComponents(positionInput);
+  modal.addComponents(row);
+
+  return modal;
+}
+
+// =====================
+// BUILD SKILL MODAL
+// =====================
+function buildSkillModal() {
+  const modal = new ModalBuilder()
+    .setCustomId("skill_modal")
+    .setTitle("Set Skill Level");
+
+  const skillInput = new TextInputBuilder()
+    .setCustomId("skill_input")
+    .setLabel("Skill Level (1-10)")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setPlaceholder("e.g., 7");
+
+  const row = new ActionRowBuilder().addComponents(skillInput);
+  modal.addComponents(row);
+
+  return modal;
 }
 
 // =====================
@@ -378,6 +530,23 @@ async function updateCompetitionEmbed(guildId) {
     .setTimestamp();
 
   await data.competitionMessage.edit({ embeds: [embed] });
+}
+
+// =====================
+// UPDATE CAPTAIN DRAFT PANEL
+// =====================
+async function updateCaptainDraftPanel(guild, guildId) {
+  const data = getServerData(guildId);
+
+  if (!data.captainPanelMessage) return;
+
+  const panelData = buildCaptainDraftPanel(guildId);
+
+  try {
+    await data.captainPanelMessage.edit(panelData);
+  } catch (err) {
+    console.error("Error updating captain draft panel:", err);
+  }
 }
 
 // =====================
@@ -609,7 +778,15 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('panel')
-    .setDescription('Send admin control panel')
+    .setDescription('Send admin control panel'),
+
+  new SlashCommandBuilder()
+    .setName('playercommands')
+    .setDescription('Send player commands panel'),
+
+  new SlashCommandBuilder()
+    .setName('captaindraft')
+    .setDescription('Send captain draft panel')
 
 ].map(c => c.toJSON());
 
@@ -652,8 +829,46 @@ client.on('interactionCreate', async interaction => {
   // MODAL SUBMIT
   // =====================
   if (interaction.isModalSubmit()) {
+    const guildId = guild.id;
+    const data = getServerData(guildId);
+
+    // JOIN MODAL
+    if (interaction.customId === "join_modal") {
+      const pos = interaction.fields.getTextInputValue("position_input").toUpperCase();
+
+      if (!["GK", "DEF", "MID", "ATT"].includes(pos)) {
+        return interaction.reply({ content: "❌ Invalid position. Use: GK, DEF, MID, or ATT", flags: 64 });
+      }
+
+      ensurePlayer(guildId, member.id);
+      data.playerData[member.id].position = pos;
+
+      if (!data.queue.includes(member.id)) {
+        data.queue.push(member.id);
+      }
+
+      await updateCompetitionEmbed(guildId);
+      await updateCaptainDraftPanel(guild, guildId);
+
+      return interaction.reply({ content: `✅ Joined as **${pos}**`, flags: 64 });
+    }
+
+    // SKILL MODAL
+    if (interaction.customId === "skill_modal") {
+      const skillValue = parseInt(interaction.fields.getTextInputValue("skill_input"));
+
+      if (isNaN(skillValue) || skillValue < 1 || skillValue > 10) {
+        return interaction.reply({ content: "❌ Skill level must be between 1 and 10", flags: 64 });
+      }
+
+      ensurePlayer(guildId, member.id);
+      data.playerData[member.id].skill = skillValue;
+
+      return interaction.reply({ content: `✅ Skill set to **${skillValue}/10**`, flags: 64 });
+    }
+
+    // FINALIZE MODAL
     if (interaction.customId === "finalize_modal") {
-      const data = getServerData(guild.id);
       const red = parseInt(interaction.fields.getTextInputValue("red_score"));
       const blue = parseInt(interaction.fields.getTextInputValue("blue_score"));
 
@@ -689,7 +904,7 @@ client.on('interactionCreate', async interaction => {
       data.captains = { red: null, blue: null };
       data.queue = [];
 
-      await updateCompetitionEmbed(guild.id);
+      await updateCompetitionEmbed(guildId);
 
       return interaction.reply({
         embeds: [
@@ -701,7 +916,8 @@ client.on('interactionCreate', async interaction => {
               { name: "🏆 Winner", value: winner, inline: false }
             )
             .setColor(0x00AEFF)
-        ]
+        ],
+        flags: 64
       });
     }
   }
@@ -710,8 +926,77 @@ client.on('interactionCreate', async interaction => {
   // BUTTON HANDLER
   // =====================
   if (interaction.isButton()) {
-    const config = getServerConfig(guild.id);
-    
+    const guildId = guild.id;
+    const config = getServerConfig(guildId);
+    const data = getServerData(guildId);
+    const id = interaction.customId;
+
+    // PLAYER BUTTONS
+    if (id === "btn_join_position") {
+      return interaction.showModal(buildJoinModal());
+    }
+
+    if (id === "btn_set_skill") {
+      return interaction.showModal(buildSkillModal());
+    }
+
+    if (id === "btn_view_stats") {
+      ensurePlayer(guildId, member.id);
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("📊 Your Stats")
+            .addFields(
+              { name: "🎮 Skill", value: `**${data.playerData[member.id].skill}/10**`, inline: true },
+              { name: "📍 Position", value: `**${data.playerData[member.id].position}**`, inline: true }
+            )
+            .setColor(0x00FF00)
+        ],
+        flags: 64
+      });
+    }
+
+    // CAPTAIN PICK BUTTONS
+    if (id.startsWith("pick_player_")) {
+      const playerId = id.replace("pick_player_", "");
+
+      if (data.pickedPlayers.has(playerId)) {
+        return interaction.reply({
+          content: `❌ <@${playerId}> has already been picked in this competition!`,
+          flags: 64
+        });
+      }
+
+      if (!data.queue.includes(playerId)) {
+        return interaction.reply({
+          content: "❌ Player not in queue",
+          flags: 64
+        });
+      }
+
+      if (member.id !== data.captains[data.currentTurn]) {
+        return interaction.reply({
+          content: `❌ Not your turn! It's <@${data.captains[data.currentTurn]}>'s turn`,
+          flags: 64
+        });
+      }
+
+      data.draftTeams[data.currentTurn].push(playerId);
+      data.queue = data.queue.filter(p => p !== playerId);
+      data.pickedPlayers.add(playerId);
+
+      data.currentTurn = data.currentTurn === "red" ? "blue" : "red";
+
+      await updateCaptainDraftPanel(guild, guildId);
+      await updateCompetitionEmbed(guildId);
+
+      return interaction.reply({
+        content: `✅ <@${playerId}> picked for **${data.currentTurn === "red" ? "🔵 BLUE" : "🔴 RED"}** team! Now <@${data.captains[data.currentTurn]}>'s turn`,
+        flags: 64
+      });
+    }
+
+    // ADMIN BUTTONS
     if (!hasRole(member, config.ADMIN_ROLES)) {
       return interaction.reply({
         content: "❌ No permission",
@@ -719,10 +1004,48 @@ client.on('interactionCreate', async interaction => {
       });
     }
 
-    const id = interaction.customId;
-
     if (id === "open_finalize_modal") {
       return interaction.showModal(buildFinalizeModal());
+    }
+
+    if (id === "btn_start_match_draft") {
+      const totalPlayers = data.draftTeams.red.length + data.draftTeams.blue.length;
+
+      if (totalPlayers < 2) {
+        return interaction.reply({
+          content: "❌ Not enough players to start a match (min 2 required)",
+          flags: 64
+        });
+      }
+
+      if (data.draftTeams.red.length < 1 || data.draftTeams.blue.length < 1) {
+        return interaction.reply({
+          content: "❌ Teams are not properly formed",
+          flags: 64
+        });
+      }
+
+      data.lastMatch = {
+        red: [...data.draftTeams.red],
+        blue: [...data.draftTeams.blue]
+      };
+
+      data.matchStarted = true;
+      await moveTeams(guild, guildId, data.draftTeams.red, data.draftTeams.blue);
+      data.draftMode = false;
+
+      return interaction.reply({ content: "⚽ Match started successfully", flags: 64 });
+    }
+
+    if (id === "btn_clear_draft") {
+      data.draftTeams = { red: [], blue: [] };
+      data.captains = { red: null, blue: null };
+      data.queue = [];
+      data.currentTurn = "red";
+      data.pickedPlayers = new Set();
+
+      await updateCaptainDraftPanel(guild, guildId);
+      return interaction.reply({ content: "🔄 Draft cleared", flags: 64 });
     }
 
     const buttonCommands = {
@@ -840,6 +1163,85 @@ async function handleCommand(interaction, guild, member) {
   }
 
   // =====================
+  // PLAYER COMMANDS PANEL
+  // =====================
+  if (command === "playercommands") {
+    if (!hasRole(member, config.ADMIN_ROLES)) {
+      return interaction.reply({
+        content: "❌ No permission",
+        flags: 64
+      });
+    }
+
+    if (!config.ADMIN_PANEL_CHANNEL_ID) {
+      return interaction.reply({
+        content: "❌ Admin panel not configured. Use /setconfig first",
+        flags: 64
+      });
+    }
+
+    const channel = await client.channels.fetch(config.ADMIN_PANEL_CHANNEL_ID);
+
+    if (!channel) {
+      return interaction.reply({
+        content: "❌ Admin panel channel not found",
+        flags: 64
+      });
+    }
+
+    await channel.send(buildPlayerPanel());
+
+    return interaction.reply({
+      content: "✅ Player commands panel sent",
+      flags: 64
+    });
+  }
+
+  // =====================
+  // CAPTAIN DRAFT PANEL
+  // =====================
+  if (command === "captaindraft") {
+    if (!hasRole(member, config.ADMIN_ROLES)) {
+      return interaction.reply({
+        content: "❌ No permission",
+        flags: 64
+      });
+    }
+
+    if (!data.draftMode || !data.captains.red || !data.captains.blue) {
+      return interaction.reply({
+        content: "❌ Captains not set. Use /captains first",
+        flags: 64
+      });
+    }
+
+    if (!config.ADMIN_PANEL_CHANNEL_ID) {
+      return interaction.reply({
+        content: "❌ Admin panel not configured. Use /setconfig first",
+        flags: 64
+      });
+    }
+
+    const channel = await client.channels.fetch(config.ADMIN_PANEL_CHANNEL_ID);
+
+    if (!channel) {
+      return interaction.reply({
+        content: "❌ Admin panel channel not found",
+        flags: 64
+      });
+    }
+
+    const panelData = buildCaptainDraftPanel(guildId);
+    const sentMessage = await channel.send(panelData);
+    data.captainPanelMessage = sentMessage;
+
+    return interaction.reply({
+      content: "✅ Captain draft panel sent",
+      flags: 64
+    });
+  }
+
+  // =====================
   // JOIN
   // =====================
   if (command === "join") {
@@ -857,8 +1259,25 @@ async function handleCommand(interaction, guild, member) {
     }
 
     await updateCompetitionEmbed(guildId);
+    await updateCaptainDraftPanel(guild, guildId);
 
     return interaction.reply(`✅ Joined as ${pos}`);
+  }
+
+  // =====================
+  // SKILL
+  // =====================
+  if (command === "skill") {
+    const level = interaction.options.getInteger("level");
+
+    if (level < 1 || level > 10) {
+      return interaction.reply({ content: "❌ Level must be between 1-10", flags: 64 });
+    }
+
+    ensurePlayer(guildId, member.id);
+    data.playerData[member.id].skill = level;
+
+    return interaction.reply(`✅ Skill set to ${level}/10`);
   }
 
   // =====================
@@ -1085,6 +1504,7 @@ async function handleCommand(interaction, guild, member) {
     data.currentTurn = data.currentTurn === "red" ? "blue" : "red";
 
     await updateCompetitionEmbed(guildId);
+    await updateCaptainDraftPanel(guild, guildId);
 
     return interaction.reply(`✅ Picked <@${player}>`);
   }
