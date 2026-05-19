@@ -634,7 +634,7 @@ async function register() {
 // =====================
 // READY EVENT
 // =====================
-client.once("ready", () => {
+client.once('clientReady', client => {
   console.log(`✅ Bot online as ${client.user.tag}`);
 });
 
