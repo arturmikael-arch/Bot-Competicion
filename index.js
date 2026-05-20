@@ -98,7 +98,8 @@ function getServerData(guildId) {
       matchHistory: [],
       matchCount: 0,
       pickedPlayers: new Set(),
-      captainPanelMessage: null
+      captainPanelMessage: null,
+      userPanelMessage: null
     };
   }
   return serverData[guildId];
@@ -330,6 +331,61 @@ function buildCaptainDraftPanel(guildId) {
 }
 
 // =====================
+// BUILD USER PANEL (PERSISTENT)
+// =====================
+function buildUserPanel(guildId) {
+  const data = getServerData(guildId);
+
+  const available = data.queue.length
+    ? data.queue.map(id =>
+        `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
+      ).join("\n")
+    : "No players in queue";
+
+  const red = data.draftTeams.red.length
+    ? data.draftTeams.red.map(id =>
+        `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
+      ).join("\n")
+    : "Empty";
+
+  const blue = data.draftTeams.blue.length
+    ? data.draftTeams.blue.map(id =>
+        `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
+      ).join("\n")
+    : "Empty";
+
+  const embed = new EmbedBuilder()
+    .setTitle("📋 COMPETITION STATUS")
+    .addFields(
+      { name: "📊 Queue", value: available, inline: false },
+      { name: "🔴 Red Team", value: red, inline: true },
+      { name: "🔵 Blue Team", value: blue, inline: true },
+      { name: "🎤 Current Turn", value: data.draftMode ? `${data.currentTurn === "red" ? "🔴" : "🔵"} ${data.currentTurn.toUpperCase()}` : "Match in progress", inline: false }
+    )
+    .setColor(0x00AEFF)
+    .setTimestamp();
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("btn_join_position")
+      .setLabel("Join Queue")
+      .setStyle(ButtonStyle.Success),
+
+    new ButtonBuilder()
+      .setCustomId("btn_set_skill")
+      .setLabel("Set Skill")
+      .setStyle(ButtonStyle.Primary),
+
+    new ButtonBuilder()
+      .setCustomId("btn_view_stats")
+      .setLabel("View Stats")
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return { embeds: [embed], components: [row] };
+}
+
+// =====================
 // BUILD JOIN MODAL
 // =====================
 function buildJoinModal() {
@@ -423,7 +479,7 @@ function buildCompetitionEmbed(guildId) {
 }
 
 // =====================
-// RESTORE PLAYERS + DELETE TEMP CHANNELS
+// RESTORE PLAYERS + DELETE TEMP CHANNELS + DELETE PANELS
 // =====================
 async function moveAllPlayersToMain(guild, guildId) {
   const config = getServerConfig(guildId);
@@ -477,9 +533,20 @@ async function moveAllPlayersToMain(guild, guildId) {
       }
     }
 
+    // DELETE PANEL MESSAGES
+    if (data.userPanelMessage) {
+      await data.userPanelMessage.delete().catch(() => null);
+    }
+
+    if (data.captainPanelMessage) {
+      await data.captainPanelMessage.delete().catch(() => null);
+    }
+
     // RESET STORAGE
     data.tempChannels = { red: null, blue: null };
     data.originalVoiceChannels = {};
+    data.userPanelMessage = null;
+    data.captainPanelMessage = null;
 
   } catch (err) {
     console.error("Error restoring players:", err);
@@ -530,6 +597,16 @@ async function updateCompetitionEmbed(guildId) {
     .setTimestamp();
 
   await data.competitionMessage.edit({ embeds: [embed] });
+
+  // Update user panel
+  if (data.userPanelMessage) {
+    try {
+      const userPanelData = buildUserPanel(guildId);
+      await data.userPanelMessage.edit(userPanelData);
+    } catch (err) {
+      console.error("Error updating user panel:", err);
+    }
+  }
 }
 
 // =====================
@@ -1329,8 +1406,13 @@ async function handleCommand(interaction, guild, member) {
       const sentMessage = await competitionChannel.send({ embeds: [embed] });
       data.competitionMessage = sentMessage;
 
+      // POST USER PANEL
+      const userPanelData = buildUserPanel(guildId);
+      const userPanelMessage = await competitionChannel.send(userPanelData);
+      data.userPanelMessage = userPanelMessage;
+
       return interaction.reply({
-        content: `✅ Competition started! Embed posted in <#${config.COMPETITION_CHANNEL_ID}>`,
+        content: `✅ Competition started! Panels posted in <#${config.COMPETITION_CHANNEL_ID}>`,
         flags: 64
       });
     } catch (err) {
@@ -1365,7 +1447,21 @@ async function handleCommand(interaction, guild, member) {
 
     await updateCompetitionEmbed(guildId);
 
-    return interaction.reply("✅ Captains set");
+    // POST CAPTAIN PANEL
+    try {
+      const panelData = buildCaptainDraftPanel(guildId);
+      const panelMessage = await client.channels.fetch(config.COMPETITION_CHANNEL_ID)
+        .then(ch => ch.send(panelData))
+        .catch(console.error);
+      
+      if (panelMessage) {
+        data.captainPanelMessage = panelMessage;
+      }
+    } catch (err) {
+      console.error("Error posting captain panel:", err);
+    }
+
+    return interaction.reply("✅ Captains set and captain panel posted");
   }
 
   // =====================
