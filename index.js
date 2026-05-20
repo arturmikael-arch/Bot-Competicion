@@ -175,47 +175,55 @@ function getVoicePlayers(guild) {
 // =====================
 function buildAdminPanel() {
   const embed = new EmbedBuilder()
-    .setTitle("⚙️ COMPETITION CONTROL PANEL")
-    .setDescription("Use buttons to control the match system quickly")
-    .setColor(0x00AEFF);
+    .setTitle("⚙️ COMPETITION CONTROL")
+    .setDescription("Manage your competition with precision")
+    .setColor(0x2C2F33)
+    .setThumbnail("https://cdn-icons-png.flaticon.com/512/1995/1995473-settings_gear_admin_configuration_tool-512.png");
 
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("btn_startcompetition")
-      .setLabel("Start Competition")
-      .setStyle(ButtonStyle.Success),
+      .setLabel("Start")
+      .setStyle(ButtonStyle.Success)
+      .setEmoji("▶️"),
 
     new ButtonBuilder()
       .setCustomId("btn_autobalance")
       .setLabel("Auto Balance")
-      .setStyle(ButtonStyle.Primary),
+      .setStyle(ButtonStyle.Primary)
+      .setEmoji("⚖️"),
 
     new ButtonBuilder()
       .setCustomId("btn_startmatch")
       .setLabel("Start Match")
       .setStyle(ButtonStyle.Success)
+      .setEmoji("⚽")
   );
 
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("btn_rematch")
       .setLabel("Rematch")
-      .setStyle(ButtonStyle.Secondary),
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji("🔄"),
 
     new ButtonBuilder()
       .setCustomId("btn_endcompetition")
       .setLabel("End Early")
-      .setStyle(ButtonStyle.Danger),
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji("⏹️"),
 
     new ButtonBuilder()
       .setCustomId("btn_finishcompetition")
-      .setLabel("Finish Competition")
-      .setStyle(ButtonStyle.Danger),
+      .setLabel("Finish")
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji("🏁"),
 
     new ButtonBuilder()
       .setCustomId("open_finalize_modal")
-      .setLabel("Finalize Match")
+      .setLabel("Score")
       .setStyle(ButtonStyle.Primary)
+      .setEmoji("📊")
   );
 
   return { embeds: [embed], components: [row1, row2] };
@@ -226,25 +234,28 @@ function buildAdminPanel() {
 // =====================
 function buildPlayerPanel() {
   const embed = new EmbedBuilder()
-    .setTitle("🎮 PLAYER COMMANDS")
-    .setDescription("Use buttons to execute player commands")
-    .setColor(0x00FF00);
+    .setTitle("🎮 PLAYER HUB")
+    .setDescription("Manage your game profile and stats")
+    .setColor(0x1ABC9C);
 
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("btn_join_position")
       .setLabel("Join Queue")
-      .setStyle(ButtonStyle.Success),
+      .setStyle(ButtonStyle.Success)
+      .setEmoji("📋"),
 
     new ButtonBuilder()
       .setCustomId("btn_set_skill")
-      .setLabel("Set Skill Level")
-      .setStyle(ButtonStyle.Primary),
+      .setLabel("Set Skill")
+      .setStyle(ButtonStyle.Primary)
+      .setEmoji("⚡"),
 
     new ButtonBuilder()
       .setCustomId("btn_view_stats")
-      .setLabel("View Stats")
+      .setLabel("My Stats")
       .setStyle(ButtonStyle.Secondary)
+      .setEmoji("📈")
   );
 
   return { embeds: [embed], components: [row1] };
@@ -258,42 +269,38 @@ function buildCaptainDraftPanel(guildId) {
 
   const currentTurnEmoji = data.currentTurn === "red" ? "🔴" : "🔵";
   const currentCaptainId = data.captains[data.currentTurn];
+  const bgColor = data.currentTurn === "red" ? 0xFF6B6B : 0x4ECDC4;
 
   const embed = new EmbedBuilder()
-    .setTitle("🎯 CAPTAIN DRAFT PANEL")
-    .setDescription(`${currentTurnEmoji} **${data.currentTurn.toUpperCase()} TEAM'S TURN**`)
-    .setColor(data.currentTurn === "red" ? 0xFF0000 : 0x0000FF)
+    .setTitle("🎯 DRAFT PHASE")
+    .setDescription(`${currentTurnEmoji} **${data.currentTurn.toUpperCase()} TEAM PICKING**`)
+    .setColor(bgColor)
     .addFields(
       {
-        name: "🔴 Red Team",
+        name: "🔴 Red Squad",
         value: data.draftTeams.red.length > 0
-          ? data.draftTeams.red.map(id => `<@${id}>`).join("\n")
-          : "No players",
+          ? data.draftTeams.red.map((id, i) => `${i + 1}. <@${id}>`).join("\n")
+          : "Waiting for picks...",
         inline: true
       },
       {
-        name: "🔵 Blue Team",
+        name: "🔵 Blue Squad",
         value: data.draftTeams.blue.length > 0
-          ? data.draftTeams.blue.map(id => `<@${id}>`).join("\n")
-          : "No players",
+          ? data.draftTeams.blue.map((id, i) => `${i + 1}. <@${id}>`).join("\n")
+          : "Waiting for picks...",
         inline: true
       },
       {
-        name: "📋 Available Players",
+        name: "📋 Pool",
         value: data.queue.length > 0
-          ? data.queue.map(id => `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`).join("\n")
-          : "All players picked!",
-        inline: false
-      },
-      {
-        name: `🎤 ${data.currentTurn === "red" ? "🔴 Red" : "🔵 Blue"} Captain`,
-        value: currentCaptainId ? `<@${currentCaptainId}>` : "Not set",
+          ? data.queue.slice(0, 10).map(id => `• <@${id}> [${data.playerData[id]?.position || "MID"}]`).join("\n") + (data.queue.length > 10 ? `\n... and ${data.queue.length - 10} more` : "")
+          : "✅ All picked!",
         inline: false
       }
     )
+    .setFooter({ text: `Current Captain: ${currentCaptainId ? "Captain #" + currentCaptainId.slice(0, 4) : "TBD"}` })
     .setTimestamp();
 
-  // Create button rows for available players (max 5 per row, max 25 total)
   const rows = [];
   const availablePlayers = data.queue.slice(0, 25);
 
@@ -311,18 +318,19 @@ function buildCaptainDraftPanel(guildId) {
     rows.push(row);
   }
 
-  // Add a row for admin controls if no more players
   if (data.queue.length === 0) {
     const controlRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId("btn_start_match_draft")
         .setLabel("Start Match")
-        .setStyle(ButtonStyle.Success),
+        .setStyle(ButtonStyle.Success)
+        .setEmoji("⚽"),
 
       new ButtonBuilder()
         .setCustomId("btn_clear_draft")
-        .setLabel("Clear Teams")
+        .setLabel("Clear")
         .setStyle(ButtonStyle.Danger)
+        .setEmoji("🗑️")
     );
     rows.push(controlRow);
   }
@@ -337,49 +345,66 @@ function buildUserPanel(guildId) {
   const data = getServerData(guildId);
 
   const available = data.queue.length
-    ? data.queue.map(id =>
-        `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
-      ).join("\n")
-    : "No players in queue";
+    ? data.queue.slice(0, 5).map((id, i) => `${i + 1}. <@${id}> [${data.playerData[id]?.position || "MID"}]`).join("\n") + (data.queue.length > 5 ? `\n... +${data.queue.length - 5} more` : "")
+    : "No queue";
 
   const red = data.draftTeams.red.length
-    ? data.draftTeams.red.map(id =>
-        `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
-      ).join("\n")
-    : "Empty";
+    ? data.draftTeams.red.map((id, i) => `${i + 1}. <@${id}>`).join("\n")
+    : "—";
 
   const blue = data.draftTeams.blue.length
-    ? data.draftTeams.blue.map(id =>
-        `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
-      ).join("\n")
-    : "Empty";
+    ? data.draftTeams.blue.map((id, i) => `${i + 1}. <@${id}>`).join("\n")
+    : "—";
 
   const embed = new EmbedBuilder()
-    .setTitle("📋 COMPETITION STATUS")
+    .setTitle("📊 LIVE STATUS")
+    .setDescription("Real-time competition tracking")
+    .setColor(0x3498DB)
     .addFields(
-      { name: "📊 Queue", value: available, inline: false },
-      { name: "🔴 Red Team", value: red, inline: true },
-      { name: "🔵 Blue Team", value: blue, inline: true },
-      { name: "🎤 Current Turn", value: data.draftMode ? `${data.currentTurn === "red" ? "🔴" : "🔵"} ${data.currentTurn.toUpperCase()}` : "Match in progress", inline: false }
+      { 
+        name: "📋 Queue", 
+        value: available, 
+        inline: false 
+      },
+      { 
+        name: "🔴 Red (5v5)", 
+        value: red, 
+        inline: true 
+      },
+      { 
+        name: "🔵 Blue (5v5)", 
+        value: blue, 
+        inline: true 
+      },
+      { 
+        name: "🎤 Turn", 
+        value: data.draftMode 
+          ? `${data.currentTurn === "red" ? "🔴" : "🔵"} ${data.currentTurn.toUpperCase()}` 
+          : "⚽ In Progress", 
+        inline: false 
+      }
     )
-    .setColor(0x00AEFF)
+    .setFooter({ text: `Queue: ${data.queue.length} | Red: ${data.draftTeams.red.length} | Blue: ${data.draftTeams.blue.length}` })
     .setTimestamp();
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("btn_join_position")
-      .setLabel("Join Queue")
-      .setStyle(ButtonStyle.Success),
+      .setLabel("Join")
+      .setStyle(ButtonStyle.Success)
+      .setEmoji("➕"),
 
     new ButtonBuilder()
       .setCustomId("btn_set_skill")
-      .setLabel("Set Skill")
-      .setStyle(ButtonStyle.Primary),
+      .setLabel("Skill")
+      .setStyle(ButtonStyle.Primary)
+      .setEmoji("⚡"),
 
     new ButtonBuilder()
       .setCustomId("btn_view_stats")
-      .setLabel("View Stats")
+      .setLabel("Stats")
       .setStyle(ButtonStyle.Secondary)
+      .setEmoji("📊")
   );
 
   return { embeds: [embed], components: [row] };
@@ -391,7 +416,7 @@ function buildUserPanel(guildId) {
 function buildJoinModal() {
   const modal = new ModalBuilder()
     .setCustomId("join_modal")
-    .setTitle("Join Queue");
+    .setTitle("📋 Join Queue");
 
   const positionInput = new TextInputBuilder()
     .setCustomId("position_input")
@@ -412,7 +437,7 @@ function buildJoinModal() {
 function buildSkillModal() {
   const modal = new ModalBuilder()
     .setCustomId("skill_modal")
-    .setTitle("Set Skill Level");
+    .setTitle("⚡ Set Skill Level");
 
   const skillInput = new TextInputBuilder()
     .setCustomId("skill_input")
@@ -433,17 +458,17 @@ function buildSkillModal() {
 function buildFinalizeModal() {
   const modal = new ModalBuilder()
     .setCustomId("finalize_modal")
-    .setTitle("Finalize Match Score");
+    .setTitle("⚽ Match Score");
 
   const redScore = new TextInputBuilder()
     .setCustomId("red_score")
-    .setLabel("Red Team Goals")
+    .setLabel("🔴 Red Team Goals")
     .setStyle(TextInputStyle.Short)
     .setRequired(true);
 
   const blueScore = new TextInputBuilder()
     .setCustomId("blue_score")
-    .setLabel("Blue Team Goals")
+    .setLabel("🔵 Blue Team Goals")
     .setStyle(TextInputStyle.Short)
     .setRequired(true);
 
@@ -461,18 +486,41 @@ function buildFinalizeModal() {
 function buildCompetitionEmbed(guildId) {
   const data = getServerData(guildId);
   const matchHistoryText = data.matchHistory.length > 0
-    ? data.matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | Winner: ${m.winner}`).join("\n")
-    : "No matches yet";
+    ? data.matchHistory.map((m, i) => `\`Match ${i + 1}\` 🔴 ${m.redScore} - 🔵 ${m.blueScore} | **${m.winner}**`).join("\n")
+    : "No matches played yet";
 
   const embed = new EmbedBuilder()
-    .setTitle("🏆 LIVE COMPETITION")
+    .setTitle("🏆 COMPETITION SCOREBOARD")
+    .setDescription("Live competition tracking and match history")
+    .setColor(0xFFD700)
     .addFields(
-      { name: "🔴 Red Team Score", value: `**${data.competitionScores.red}** wins`, inline: true },
-      { name: "🔵 Blue Team Score", value: `**${data.competitionScores.blue}** wins`, inline: true },
-      { name: "📊 Match History", value: matchHistoryText, inline: false },
-      { name: "📋 Current Match", value: data.matchStarted ? "Match in progress" : "Waiting to start", inline: false }
+      { 
+        name: "🔴 Red Wins", 
+        value: `\`\`\`${data.competitionScores.red}\`\`\``, 
+        inline: true 
+      },
+      { 
+        name: "🔵 Blue Wins", 
+        value: `\`\`\`${data.competitionScores.blue}\`\`\``, 
+        inline: true 
+      },
+      { 
+        name: "⚖️ Balance",
+        value: data.competitionScores.red === data.competitionScores.blue ? "TIED" : (data.competitionScores.red > data.competitionScores.blue ? "RED LEADING" : "BLUE LEADING"),
+        inline: true
+      },
+      { 
+        name: "📋 Match History", 
+        value: matchHistoryText, 
+        inline: false 
+      },
+      { 
+        name: "📊 Status", 
+        value: data.matchStarted ? "⚽ **LIVE MATCH**" : "⏸️ **WAITING**", 
+        inline: false 
+      }
     )
-    .setColor(0x00AEFF)
+    .setFooter({ text: `Total Matches: ${data.matchCount}` })
     .setTimestamp();
 
   return embed;
@@ -561,40 +609,7 @@ async function updateCompetitionEmbed(guildId) {
   
   if (!data.competitionMessage) return;
 
-  const available = data.queue.length
-    ? data.queue.map(id =>
-        `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
-      ).join("\n")
-    : "No players left";
-
-  const red = data.draftTeams.red.length
-    ? data.draftTeams.red.map(id =>
-        `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
-      ).join("\n")
-    : "Empty";
-
-  const blue = data.draftTeams.blue.length
-    ? data.draftTeams.blue.map(id =>
-        `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
-      ).join("\n")
-    : "Empty";
-
-  const matchHistoryText = data.matchHistory.length > 0
-    ? data.matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | Winner: ${m.winner}`).join("\n")
-    : "No matches yet";
-
-  const embed = new EmbedBuilder()
-    .setTitle("🏆 LIVE COMPETITION")
-    .addFields(
-      { name: "🔴 Red Wins", value: `**${data.competitionScores.red}**`, inline: true },
-      { name: "🔵 Blue Wins", value: `**${data.competitionScores.blue}**`, inline: true },
-      { name: "📊 Match History", value: matchHistoryText, inline: false },
-      { name: "📋 Available Players", value: available },
-      { name: "🔴 Red Team", value: red, inline: true },
-      { name: "🔵 Blue Team", value: blue, inline: true }
-    )
-    .setColor(0x00AEFF)
-    .setTimestamp();
+  const embed = buildCompetitionEmbed(guildId);
 
   await data.competitionMessage.edit({ embeds: [embed] });
 
@@ -927,7 +942,7 @@ client.on('interactionCreate', async interaction => {
       await updateCompetitionEmbed(guildId);
       await updateCaptainDraftPanel(guild, guildId);
 
-      return interaction.reply({ content: `✅ Joined as **${pos}**`, flags: 64 });
+      return interaction.reply({ content: `✅ **${pos}** - Joined the queue!`, flags: 64 });
     }
 
     // SKILL MODAL
@@ -941,7 +956,7 @@ client.on('interactionCreate', async interaction => {
       ensurePlayer(guildId, member.id);
       data.playerData[member.id].skill = skillValue;
 
-      return interaction.reply({ content: `✅ Skill set to **${skillValue}/10**`, flags: 64 });
+      return interaction.reply({ content: `⚡ **${skillValue}/10** - Skill level updated!`, flags: 64 });
     }
 
     // FINALIZE MODAL
@@ -987,12 +1002,12 @@ client.on('interactionCreate', async interaction => {
         embeds: [
           new EmbedBuilder()
             .setTitle("⚽ MATCH FINISHED")
+            .setColor(winner === "RED" ? 0xFF6B6B : winner === "BLUE" ? 0x4ECDC4 : 0xFFD700)
             .addFields(
-              { name: "🔴 Red", value: `${red}`, inline: true },
-              { name: "🔵 Blue", value: `${blue}`, inline: true },
-              { name: "🏆 Winner", value: winner, inline: false }
+              { name: "🔴 Red", value: `\`\`\`${red}\`\`\``, inline: true },
+              { name: "🔵 Blue", value: `\`\`\`${blue}\`\`\``, inline: true },
+              { name: "🏆 Winner", value: `**${winner}**`, inline: false }
             )
-            .setColor(0x00AEFF)
         ],
         flags: 64
       });
@@ -1022,12 +1037,14 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({
         embeds: [
           new EmbedBuilder()
-            .setTitle("📊 Your Stats")
+            .setTitle("📊 YOUR STATS")
+            .setColor(0x1ABC9C)
             .addFields(
-              { name: "🎮 Skill", value: `**${data.playerData[member.id].skill}/10**`, inline: true },
-              { name: "📍 Position", value: `**${data.playerData[member.id].position}**`, inline: true }
+              { name: "⚡ Skill Level", value: `\`\`\`${data.playerData[member.id].skill}/10\`\`\``, inline: true },
+              { name: "📍 Position", value: `\`\`\`${data.playerData[member.id].position}\`\`\``, inline: true }
             )
-            .setColor(0x00FF00)
+            .setFooter({ text: "Keep improving your skills!" })
+            .setTimestamp()
         ],
         flags: 64
       });
@@ -1039,7 +1056,7 @@ client.on('interactionCreate', async interaction => {
 
       if (data.pickedPlayers.has(playerId)) {
         return interaction.reply({
-          content: `❌ <@${playerId}> has already been picked in this competition!`,
+          content: `❌ <@${playerId}> has already been picked!`,
           flags: 64
         });
       }
@@ -1068,7 +1085,7 @@ client.on('interactionCreate', async interaction => {
       await updateCompetitionEmbed(guildId);
 
       return interaction.reply({
-        content: `✅ <@${playerId}> picked for **${data.currentTurn === "red" ? "🔵 BLUE" : "🔴 RED"}** team! Now <@${data.captains[data.currentTurn]}>'s turn`,
+        content: `✅ <@${playerId}> picked for **${data.currentTurn === "red" ? "🔵 BLUE" : "🔴 RED"}** team!\nNext: <@${data.captains[data.currentTurn]}>`,
         flags: 64
       });
     }
@@ -1111,7 +1128,7 @@ client.on('interactionCreate', async interaction => {
       await moveTeams(guild, guildId, data.draftTeams.red, data.draftTeams.blue);
       data.draftMode = false;
 
-      return interaction.reply({ content: "⚽ Match started successfully", flags: 64 });
+      return interaction.reply({ content: "⚽ **Match started!** Teams moved to voice channels", flags: 64 });
     }
 
     if (id === "btn_clear_draft") {
@@ -1122,7 +1139,7 @@ client.on('interactionCreate', async interaction => {
       data.pickedPlayers = new Set();
 
       await updateCaptainDraftPanel(guild, guildId);
-      return interaction.reply({ content: "🔄 Draft cleared", flags: 64 });
+      return interaction.reply({ content: "🔄 **Draft cleared!**", flags: 64 });
     }
 
     const buttonCommands = {
@@ -1199,7 +1216,17 @@ async function handleCommand(interaction, guild, member) {
     saveConfigs(serverConfigs);
 
     return interaction.reply({
-      content: `✅ Configuration saved:\n• Main VC: <#${mainVc.id}>\n• Team Category: <#${teamCategory.id}>\n• Admin Panel: <#${adminPanel.id}>\n• Competition Channel: <#${competitionChannel.id}>`,
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("✅ Configuration Saved")
+          .setColor(0x2ECC71)
+          .addFields(
+            { name: "🎤 Main VC", value: `<#${mainVc.id}>`, inline: false },
+            { name: "📁 Team Category", value: `<#${teamCategory.id}>`, inline: false },
+            { name: "⚙️ Admin Panel", value: `<#${adminPanel.id}>`, inline: false },
+            { name: "🏆 Competition Channel", value: `<#${competitionChannel.id}>`, inline: false }
+          )
+      ],
       flags: 64
     });
   }
@@ -1338,7 +1365,7 @@ async function handleCommand(interaction, guild, member) {
     await updateCompetitionEmbed(guildId);
     await updateCaptainDraftPanel(guild, guildId);
 
-    return interaction.reply(`✅ Joined as ${pos}`);
+    return interaction.reply(`✅ Joined as **${pos}**`);
   }
 
   // =====================
@@ -1354,7 +1381,7 @@ async function handleCommand(interaction, guild, member) {
     ensurePlayer(guildId, member.id);
     data.playerData[member.id].skill = level;
 
-    return interaction.reply(`✅ Skill set to ${level}/10`);
+    return interaction.reply(`✅ Skill set to **${level}/10**`);
   }
 
   // =====================
@@ -1390,16 +1417,20 @@ async function handleCommand(interaction, guild, member) {
 
     const embed = new EmbedBuilder()
       .setTitle("🏆 COMPETITION STARTED")
-      .setDescription(
-        data.queue.map(id =>
-          `• <@${id}> — **${data.playerData[id]?.position || "MID"}**`
-        ).join("\n") || "No players"
-      )
+      .setDescription(`**${data.queue.length}** players ready to compete`)
+      .setColor(0xFFD700)
       .addFields(
-        { name: "🔴 Red Wins", value: "**0**", inline: true },
-        { name: "🔵 Blue Wins", value: "**0**", inline: true }
+        {
+          name: "📋 Players in Queue",
+          value: data.queue.length > 0
+            ? data.queue.slice(0, 10).map((id, i) => `${i + 1}. <@${id}> [${data.playerData[id]?.position || "MID"}]`).join("\n") + (data.queue.length > 10 ? `\n... and ${data.queue.length - 10} more` : "")
+            : "No players"
+        },
+        { name: "🔴 Red Wins", value: "`0`", inline: true },
+        { name: "🔵 Blue Wins", value: "`0`", inline: true }
       )
-      .setColor(0x00AEFF);
+      .setFooter({ text: "Good luck to all competitors!" })
+      .setTimestamp();
 
     try {
       const competitionChannel = await client.channels.fetch(config.COMPETITION_CHANNEL_ID);
@@ -1412,13 +1443,13 @@ async function handleCommand(interaction, guild, member) {
       data.userPanelMessage = userPanelMessage;
 
       return interaction.reply({
-        content: `✅ Competition started! Panels posted in <#${config.COMPETITION_CHANNEL_ID}>`,
+        content: `✅ Competition started with **${data.queue.length}** players!`,
         flags: 64
       });
     } catch (err) {
       console.error("Error posting competition message:", err);
       return interaction.reply({
-        content: "❌ Failed to post competition message to the configured channel",
+        content: "❌ Failed to post competition message",
         flags: 64
       });
     }
@@ -1461,7 +1492,7 @@ async function handleCommand(interaction, guild, member) {
       console.error("Error posting captain panel:", err);
     }
 
-    return interaction.reply("✅ Captains set and captain panel posted");
+    return interaction.reply(`✅ Captains set: 🔴 <@${data.captains.red}> vs 🔵 <@${data.captains.blue}>`);
   }
 
   // =====================
@@ -1550,18 +1581,19 @@ async function handleCommand(interaction, guild, member) {
     return interaction.reply({
       embeds: [
         new EmbedBuilder()
-          .setTitle("🤖 POSITION-BASED AUTO BALANCE")
+          .setTitle("⚖️ AUTO BALANCE COMPLETE")
+          .setColor(0x9B59B6)
           .addFields(
             {
               name: "🔴 Red Team",
-              value: teamRed.map(id => `<@${id}> (${data.playerData[id]?.position})`).join("\n") || "None"
+              value: teamRed.map((id, i) => `${i + 1}. <@${id}> [${data.playerData[id]?.position}]`).join("\n") || "None"
             },
             {
               name: "🔵 Blue Team",
-              value: teamBlue.map(id => `<@${id}> (${data.playerData[id]?.position})`).join("\n") || "None"
+              value: teamBlue.map((id, i) => `${i + 1}. <@${id}> [${data.playerData[id]?.position}]`).join("\n") || "None"
             }
           )
-          .setColor(0x00AEFF)
+          .setFooter({ text: "Teams are ready!" })
       ]
     });
   }
@@ -1574,7 +1606,7 @@ async function handleCommand(interaction, guild, member) {
 
     if (data.pickedPlayers.has(player)) {
       return interaction.reply({
-        content: `❌ <@${player}> has already been picked in this competition!`,
+        content: `❌ <@${player}> has already been picked!`,
         flags: 64
       });
     }
@@ -1602,7 +1634,7 @@ async function handleCommand(interaction, guild, member) {
     await updateCompetitionEmbed(guildId);
     await updateCaptainDraftPanel(guild, guildId);
 
-    return interaction.reply(`✅ Picked <@${player}>`);
+    return interaction.reply(`✅ <@${player}> picked`);
   }
 
   // =====================
@@ -1719,13 +1751,14 @@ async function handleCommand(interaction, guild, member) {
       embeds: [
         new EmbedBuilder()
           .setTitle("⚽ MATCH FINISHED")
+          .setColor(winner === "RED" ? 0xFF6B6B : winner === "BLUE" ? 0x4ECDC4 : 0xFFD700)
           .addFields(
-            { name: "🔴 Red", value: `**${red}**`, inline: true },
-            { name: "🔵 Blue", value: `**${blue}**`, inline: true },
+            { name: "🔴 Red", value: `\`\`\`${red}\`\`\``, inline: true },
+            { name: "🔵 Blue", value: `\`\`\`${blue}\`\`\``, inline: true },
             { name: "🏆 Winner", value: `**${winner}**`, inline: false },
             { name: "📊 Competition Score", value: `🔴 ${data.competitionScores.red} - 🔵 ${data.competitionScores.blue}`, inline: false }
           )
-          .setColor(winner === "RED" ? 0xFF0000 : winner === "BLUE" ? 0x0000FF : 0xFFFFFF)
+          .setFooter({ text: "Ready for the next match?" })
       ]
     });
   }
@@ -1762,7 +1795,7 @@ async function handleCommand(interaction, guild, member) {
 
     await updateCompetitionEmbed(guildId);
 
-    return interaction.reply("🔁 Rematch started successfully");
+    return interaction.reply("🔁 **Rematch started** - Same teams!");
   }
 
   // =====================
@@ -1791,28 +1824,30 @@ async function handleCommand(interaction, guild, member) {
     }
 
     let competitionWinner = "DRAW";
-    let winnerColor = 0xFFFFFF;
+    let winnerColor = 0xFFD700;
 
     if (data.competitionScores.red > data.competitionScores.blue) {
       competitionWinner = "🔴 RED TEAM";
-      winnerColor = 0xFF0000;
+      winnerColor = 0xFF6B6B;
     } else if (data.competitionScores.blue > data.competitionScores.red) {
       competitionWinner = "🔵 BLUE TEAM";
-      winnerColor = 0x0000FF;
+      winnerColor = 0x4ECDC4;
     }
 
     const matchHistoryText = data.matchHistory.length > 0
-      ? data.matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | ${m.winner}`).join("\n")
+      ? data.matchHistory.map((m, i) => `**Match ${i + 1}:** 🔴 ${m.redScore} - 🔵 ${m.blueScore} | **${m.winner}**`).join("\n")
       : "No matches";
 
     const embed = new EmbedBuilder()
       .setTitle("🏆 COMPETITION FINISHED")
+      .setDescription("The competition has ended!")
+      .setColor(winnerColor)
       .addFields(
         { name: "🏅 CHAMPION", value: `**${competitionWinner}**`, inline: false },
-        { name: "📊 Final Score", value: `🔴 ${data.competitionScores.red} - 🔵 ${data.competitionScores.blue}`, inline: false },
+        { name: "📊 Final Score", value: `🔴 **${data.competitionScores.red}** - 🔵 **${data.competitionScores.blue}**`, inline: false },
         { name: "📋 Match Summary", value: matchHistoryText, inline: false }
       )
-      .setColor(winnerColor)
+      .setFooter({ text: "Congratulations to the winners!" })
       .setTimestamp();
 
     await data.competitionMessage.edit({ embeds: [embed] });
@@ -1854,21 +1889,26 @@ async function handleCommand(interaction, guild, member) {
     }
 
     let winner = "DRAW";
+    let winnerColor = 0xFFD700;
 
     if (data.competitionScores.red > data.competitionScores.blue) {
       winner = "🔴 RED TEAM";
+      winnerColor = 0xFF6B6B;
     } else if (data.competitionScores.blue > data.competitionScores.red) {
       winner = "🔵 BLUE TEAM";
+      winnerColor = 0x4ECDC4;
     }
 
     const embed = new EmbedBuilder()
       .setTitle("🏁 COMPETITION ENDED EARLY")
+      .setDescription("The competition was stopped by an admin")
+      .setColor(winnerColor)
       .addFields(
         { name: "🏆 Winner", value: winner, inline: false },
         { name: "📊 Score", value: `🔴 ${data.competitionScores.red} - 🔵 ${data.competitionScores.blue}`, inline: false },
         { name: "🎮 Matches Played", value: `${data.matchCount}`, inline: false }
       )
-      .setColor(0xFFA500)
+      .setFooter({ text: "Thanks for playing!" })
       .setTimestamp();
 
     await data.competitionMessage.edit({ embeds: [embed] });
@@ -1888,7 +1928,7 @@ async function handleCommand(interaction, guild, member) {
     data.lastMatch = null;
 
     return interaction.reply({
-      content: "🏁 Competition ended early and all players restored"
+      content: "🏁 **Competition ended** - All players restored"
     });
   }
 
